@@ -1,0 +1,11 @@
+# PDF and Image Processing
+pdf2image==1.17.0
+pytesseract==0.3.10
+Pillow==10.2.0
+
+# LLM and API handling
+google-generativeai==0.4.1
+python-dotenv==1.0.1
+
+# Database
+pymongo==4.6.1
