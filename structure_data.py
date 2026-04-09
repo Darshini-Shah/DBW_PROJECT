@@ -13,7 +13,7 @@ def structure_text_with_gemini(input_file, output_file):
         raw_text = f.read()
 
     # 2. Setup the model
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = genai.GenerativeModel('gemini-2.5-flash')
 
     # 3. Create the prompt (The most important part!)
     prompt = f"""
@@ -22,8 +22,17 @@ def structure_text_with_gemini(input_file, output_file):
     
     TASK:
     - Identify individual survey reports in the text.
-    - Extract: Resident Name, Location, Primary Need (e.g., Food, Water, Medical), and Urgent Remarks.
-    - If a checkbox was marked (like "[X] Urgent"), note it as a high priority.
+    - Extract the following fields for each survey:
+      1. date: The date of the report (use YYYY-MM-DD format if possible).
+      2. geographical area: The location or area mentioned.
+      3. type of issue: Category of the problem (e.g., Food, Water, Medical, Logistics).
+      4. number of volunteer need: Estimated number of volunteers required (integer).
+      5. what is the issue: A short description of the specific problem.
+      6. scale of urgency: A value from 1 to 10 (10 being most urgent).
+      7. type of volunteer need: Skills or roles required (e.g., Medical Professional, General Labor, Driver).
+      8. scale of effect: A value from 1 to 10 (representing amount of people/area affected).
+
+    - If any field is missing, use null.
     - Format the final output as a VALID JSON LIST of objects.
 
     RAW TEXT:
