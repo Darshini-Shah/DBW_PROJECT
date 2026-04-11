@@ -1,106 +1,231 @@
 import React, { useState } from 'react';
-import { Card, Form, Select, Slider, Button, message, Typography, Typography as AntTypography } from 'antd';
-import { EnvironmentOutlined, SendOutlined } from '@ant-design/icons';
+import { Card, Button, Typography, Alert, Upload, Progress, List, Tag, Space, Divider } from 'antd';
+import { InboxOutlined, FileTextOutlined, CheckCircleFilled, EnvironmentOutlined, ExclamationCircleFilled } from '@ant-design/icons';
+import { uploadSurveyPDF } from '../api';
 
 const { Title, Text } = Typography;
-const { Option } = Select;
+const { Dragger } = Upload;
 
-const FieldWorker = () => {
-  const [form] = Form.useForm();
-  const [location, setLocation] = useState(null);
-  const [isLocating, setIsLocating] = useState(false);
+const urgencyColors = {
+  1: '#52c41a', 2: '#52c41a', 3: '#73d13d',
+  4: '#fadb14', 5: '#faad14', 6: '#fa8c16',
+  7: '#f5222d', 8: '#f5222d', 9: '#a8071a', 10: '#a8071a',
+};
 
-  const onFinish = (values) => {
-    console.log('Success:', { ...values, location });
-    message.success('Report submitted successfully!');
-    form.resetFields();
-    setLocation(null);
+const FieldWorker = ({ user }) => {
+  const [uploading, setUploading] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [progressStatus, setProgressStatus] = useState('');
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
+
+  const handleUpload = async (file) => {
+    setUploading(true);
+    setResult(null);
+    setError(null);
+    setProgress(0);
+
+    // Simulate progress stages since processing takes time
+    const progressStages = [
+      { pct: 15, msg: 'Uploading PDF...' },
+      { pct: 35, msg: 'Running OCR on pages...' },
+      { pct: 60, msg: 'AI analyzing survey content...' },
+      { pct: 80, msg: 'Structuring data & detecting issues...' },
+      { pct: 90, msg: 'Uploading to database & notifying volunteers...' },
+    ];
+
+    let stageIdx = 0;
+    const progressInterval = setInterval(() => {
+      if (stageIdx < progressStages.length) {
+        setProgress(progressStages[stageIdx].pct);
+        setProgressStatus(progressStages[stageIdx].msg);
+        stageIdx++;
+      }
+    }, 3000);
+
+    try {
+      const data = await uploadSurveyPDF(file);
+      clearInterval(progressInterval);
+      setProgress(100);
+      setProgressStatus('Complete!');
+      setResult(data);
+    } catch (err) {
+      clearInterval(progressInterval);
+      setProgress(0);
+      setProgressStatus('');
+      const detail = err.response?.data?.detail || 'Failed to process survey. Please try again.';
+      setError(detail);
+    } finally {
+      setUploading(false);
+    }
+
+    // Prevent antd Upload from doing its own upload
+    return false;
   };
 
-  const handleCaptureLocation = () => {
-    setIsLocating(true);
-    // Simulate a brief delay for location capture
-    setTimeout(() => {
-      setLocation({ lat: 40.7128, lng: -74.0060 });
-      setIsLocating(false);
-      message.success('Location captured successfully!');
-    }, 1000);
+  const resetUpload = () => {
+    setResult(null);
+    setError(null);
+    setProgress(0);
+    setProgressStatus('');
   };
 
   return (
-    <div style={{ maxWidth: '600px', margin: '0 auto' }}>
+    <div style={{ maxWidth: '700px', margin: '0 auto' }}>
       <div style={{ marginBottom: '24px' }}>
-        <Title level={2} style={{ margin: 0 }}>Report an Issue</Title>
-        <Text style={{ color: '#8c8c8c' }}>Submit details from the field to request assistance.</Text>
+        <Title level={2} style={{ margin: 0 }}>Submit Survey</Title>
+        <Text style={{ color: '#8c8c8c' }}>
+          Upload a PDF survey form from the field. Our AI will extract issues and notify nearby volunteers automatically.
+          {user?.area && <span> • <EnvironmentOutlined /> Reporting from {user.area}, {user.city}</span>}
+        </Text>
       </div>
 
-      <Card
-        style={{ borderRadius: '16px', boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}
-        bodyStyle={{ padding: '24px' }}
-      >
-        <Form
-          form={form}
-          layout="vertical"
-          onFinish={onFinish}
-          initialValues={{ urgency: 3 }}
-        >
-          <Form.Item
-            name="category"
-            label="Issue Category"
-            rules={[{ required: true, message: 'Please select a category!' }]}
-          >
-            <Select placeholder="Select the type of issue" size="large">
-              <Option value="food">Food Shortage</Option>
-              <Option value="medical">Medical Emergency</Option>
-              <Option value="shelter">Shelter Reqiured</Option>
-              <Option value="infrastructure">Infrastructure Damage</Option>
-              <Option value="other">Other</Option>
-            </Select>
-          </Form.Item>
+      {error && (
+        <Alert
+          message="Processing Failed"
+          description={error}
+          type="error"
+          showIcon
+          closable
+          onClose={() => setError(null)}
+          style={{ marginBottom: '16px', borderRadius: '12px' }}
+        />
+      )}
 
-          <Form.Item
-            name="urgency"
-            label="Urgency Level (1 - Low, 5 - Critical)"
-            rules={[{ required: true }]}
+      {/* Upload Section */}
+      {!result && (
+        <Card style={{ borderRadius: '16px', boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }} styles={{ body: { padding: '32px' } }}>
+          <Dragger
+            name="file"
+            accept=".pdf"
+            maxCount={1}
+            showUploadList={false}
+            beforeUpload={handleUpload}
+            disabled={uploading}
+            style={{
+              padding: '40px 20px',
+              borderRadius: '12px',
+              border: '2px dashed #d9d9d9',
+              background: uploading ? '#fafafa' : '#fff',
+            }}
           >
-            <Slider
-              min={1}
-              max={5}
-              marks={{
-                1: '1',
-                2: '2',
-                3: '3',
-                4: '4',
-                5: { style: { color: '#f5222d' }, label: <strong>5</strong> },
-              }}
-            />
-          </Form.Item>
-
-          <Form.Item label="Location">
-            {location ? (
-              <div style={{ padding: '12px', background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: '8px', color: '#389e0d' }}>
-                <EnvironmentOutlined style={{ marginRight: '8px' }} />
-                Location captured: {location.lat}, {location.lng}
+            {uploading ? (
+              <div>
+                <Progress
+                  type="circle"
+                  percent={progress}
+                  size={80}
+                  strokeColor={{ '0%': '#1890ff', '100%': '#52c41a' }}
+                />
+                <p style={{ marginTop: '16px', fontSize: '16px', fontWeight: 500, color: '#262626' }}>
+                  Processing Survey...
+                </p>
+                <p style={{ color: '#8c8c8c', fontSize: '14px' }}>
+                  {progressStatus}
+                </p>
               </div>
             ) : (
-              <Button 
-                onClick={handleCaptureLocation} 
-                icon={<EnvironmentOutlined />} 
-                loading={isLocating}
-                block
-              >
-                Capture Location
-              </Button>
+              <div>
+                <p className="ant-upload-drag-icon">
+                  <InboxOutlined style={{ fontSize: '48px', color: '#1890ff' }} />
+                </p>
+                <p style={{ fontSize: '16px', fontWeight: 500, color: '#262626' }}>
+                  Click or drag PDF survey to upload
+                </p>
+                <p style={{ color: '#8c8c8c', fontSize: '14px' }}>
+                  Supports handwritten and printed survey forms (max 20MB)
+                </p>
+              </div>
             )}
-          </Form.Item>
+          </Dragger>
 
-          <Form.Item style={{ marginTop: '32px', marginBottom: 0 }}>
-            <Button type="primary" htmlType="submit" size="large" block icon={<SendOutlined />}>
-              Submit Report
-            </Button>
-          </Form.Item>
-        </Form>
-      </Card>
+          <div style={{ marginTop: '20px', padding: '16px', background: '#f6f6f6', borderRadius: '10px' }}>
+            <Text strong style={{ fontSize: '13px', color: '#595959' }}>How it works:</Text>
+            <div style={{ marginTop: '8px', fontSize: '13px', color: '#8c8c8c', lineHeight: '2' }}>
+              <div>1️⃣ <strong>OCR</strong> — Extracts text from each page of the PDF</div>
+              <div>2️⃣ <strong>AI Analysis</strong> — Gemini AI identifies issues, urgency, and volunteer needs</div>
+              <div>3️⃣ <strong>Database</strong> — Issues are saved and geo-tagged to your location</div>
+              <div>4️⃣ <strong>Notify</strong> — Nearby volunteers get notified based on urgency radius</div>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {/* Results Section */}
+      {result && (
+        <div>
+          <Alert
+            message={result.message}
+            type="success"
+            showIcon
+            icon={<CheckCircleFilled />}
+            style={{ marginBottom: '16px', borderRadius: '12px' }}
+          />
+
+          <Card
+            title={
+              <Space>
+                <FileTextOutlined />
+                <span>Extracted Issues ({result.issues_found})</span>
+              </Space>
+            }
+            style={{ borderRadius: '16px', boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}
+          >
+            <List
+              dataSource={result.surveys || []}
+              renderItem={(survey, index) => {
+                const urgency = survey['scale of urgency'] || 5;
+                const urgencyColor = urgencyColors[urgency] || '#faad14';
+
+                return (
+                  <List.Item style={{ padding: '16px 0' }}>
+                    <List.Item.Meta
+                      title={
+                        <Space size="middle" wrap>
+                          <Tag color="blue">{result.survey_ids?.[index] || `Issue ${index + 1}`}</Tag>
+                          <span style={{ fontWeight: 600 }}>{survey['type of issue'] || 'Unknown'}</span>
+                          <Tag color={urgencyColor === '#52c41a' ? 'green' : urgencyColor === '#faad14' ? 'gold' : 'red'}>
+                            Urgency: {urgency}/10
+                          </Tag>
+                        </Space>
+                      }
+                      description={
+                        <div style={{ marginTop: '8px' }}>
+                          <div style={{ color: '#595959', marginBottom: '6px' }}>
+                            {survey['what is the issue'] || 'No description'}
+                          </div>
+                          <Space size="middle" style={{ fontSize: '12px', color: '#8c8c8c' }} wrap>
+                            {survey['geographical area'] && (
+                              <span><EnvironmentOutlined /> {survey['geographical area']}</span>
+                            )}
+                            {survey['number of volunteer need'] && (
+                              <span>👥 {survey['number of volunteer need']} volunteer(s) needed</span>
+                            )}
+                            {survey['type of volunteer need'] && (
+                              <span>🔧 {survey['type of volunteer need']}</span>
+                            )}
+                            {survey.date && <span>📅 {survey.date}</span>}
+                          </Space>
+                        </div>
+                      }
+                    />
+                  </List.Item>
+                );
+              }}
+            />
+          </Card>
+
+          <Button
+            type="primary"
+            size="large"
+            block
+            onClick={resetUpload}
+            style={{ marginTop: '16px', borderRadius: '10px', height: '48px' }}
+          >
+            Upload Another Survey
+          </Button>
+        </div>
+      )}
     </div>
   );
 };

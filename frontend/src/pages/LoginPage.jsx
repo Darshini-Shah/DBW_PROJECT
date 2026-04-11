@@ -1,28 +1,39 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Card, Form, Input, Button, Select, Typography, message } from 'antd';
-import { MailOutlined, LockOutlined, UserOutlined, LoginOutlined } from '@ant-design/icons';
+import { Card, Form, Input, Button, Typography, message, Alert } from 'antd';
+import { MailOutlined, LockOutlined, LoginOutlined } from '@ant-design/icons';
+import { loginUser } from '../api';
 
 const { Title, Text } = Typography;
-const { Option } = Select;
 
-const LoginPage = ({ setUser }) => {
+const LoginPage = ({ onSuccess }) => {
   const navigate = useNavigate();
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
 
-  const onFinish = (values) => {
-    setUser({
-      email: values.email,
-      role: values.role
-    });
-    message.success('Login successful!');
-    navigate('/');
+  const onFinish = async (values) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const { user } = await loginUser(values.email, values.password);
+      message.success(`Welcome back, ${user.fullName}!`);
+      if (onSuccess) {
+        onSuccess(user);
+      }
+    } catch (err) {
+      const detail = err.response?.data?.detail || 'Login failed. Please check your credentials.';
+      setError(detail);
+      message.error(detail);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
     <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '80vh', padding: '24px' }}>
       <Card
         style={{ width: '100%', maxWidth: '400px', borderRadius: '16px', boxShadow: '0 8px 24px rgba(0,0,0,0.08)' }}
-        bodyStyle={{ padding: '32px' }}
+        styles={{ body: { padding: '32px' } }}
       >
         <div style={{ textAlign: 'center', marginBottom: '32px' }}>
           <div style={{ 
@@ -36,7 +47,11 @@ const LoginPage = ({ setUser }) => {
           <Text style={{ color: '#8c8c8c' }}>Please enter your details to sign in.</Text>
         </div>
 
-        <Form name="login_form" layout="vertical" onFinish={onFinish} initialValues={{ role: 'Field Worker' }}>
+        {error && (
+          <Alert message={error} type="error" showIcon style={{ marginBottom: '16px', borderRadius: '8px' }} />
+        )}
+
+        <Form name="login_form" layout="vertical" onFinish={onFinish}>
           <Form.Item name="email" label="Email Address" rules={[{ required: true, message: 'Please input your email!' }, { type: 'email', message: 'Please enter a valid email!' }]}>
             <Input prefix={<MailOutlined style={{ color: '#bfbfbf' }} />} placeholder="name@example.com" size="large" />
           </Form.Item>
@@ -45,15 +60,8 @@ const LoginPage = ({ setUser }) => {
             <Input.Password prefix={<LockOutlined style={{ color: '#bfbfbf' }} />} placeholder="Password" size="large" />
           </Form.Item>
 
-          <Form.Item name="role" label="Role" rules={[{ required: true, message: 'Please select a role!' }]}>
-            <Select size="large" suffixIcon={<UserOutlined />}>
-              <Option value="Field Worker">Field Worker</Option>
-              <Option value="Volunteer">Volunteer</Option>
-            </Select>
-          </Form.Item>
-
           <Form.Item style={{ marginTop: '32px', marginBottom: 0 }}>
-            <Button type="primary" htmlType="submit" size="large" block icon={<LoginOutlined />}>
+            <Button type="primary" htmlType="submit" size="large" block icon={<LoginOutlined />} loading={loading}>
               Log In
             </Button>
             <Button type="link" block onClick={() => navigate('/')} style={{ marginTop: '16px' }}>

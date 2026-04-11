@@ -12,3 +12,18 @@ python-dotenv==1.0.1
 # Database
 pymongo==4.6.1
 dnspython==2.6.1
+
+# Web API
+fastapi
+uvicorn[standard]
+
+# Authentication
+python-jose[cryptography]
+passlib[bcrypt]
+bcrypt==4.0.1
+
+# HTTP Client (for reverse geocoding)
+httpx
+
+# Data Validation
+pydantic[email]

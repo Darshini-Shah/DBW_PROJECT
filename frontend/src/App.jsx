@@ -1,13 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Routes, Route, useNavigate, Navigate } from 'react-router-dom';
-import { Layout, Typography, ConfigProvider, Button, Tag, Space } from 'antd';
-import { LogoutOutlined, UserOutlined, LoginOutlined } from '@ant-design/icons';
+import { Layout, Typography, ConfigProvider, Button, Tag, Space, Badge } from 'antd';
+import { LogoutOutlined, UserOutlined, LoginOutlined, EnvironmentOutlined, BellOutlined } from '@ant-design/icons';
 import LoginPage from './pages/LoginPage';
 import RoleSelection from './pages/RoleSelection';
 import RegisterFieldWorker from './pages/RegisterFieldWorker';
 import RegisterVolunteer from './pages/RegisterVolunteer';
 import FieldWorker from './pages/FieldWorker';
 import Volunteer from './pages/Volunteer';
+import { logout, getMe, getNotifications } from './api';
 import './App.css';
 
 const { Header, Content, Footer } = Layout;
@@ -15,12 +16,58 @@ const { Title, Text } = Typography;
 
 function App() {
   const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [notificationCount, setNotificationCount] = useState(0);
   const navigate = useNavigate();
 
+  // Restore session from JWT on app load
+  useEffect(() => {
+    const savedUser = localStorage.getItem('user');
+    const token = localStorage.getItem('token');
+    if (savedUser && token) {
+      try {
+        setUser(JSON.parse(savedUser));
+      } catch {
+        localStorage.removeItem('user');
+        localStorage.removeItem('token');
+      }
+    }
+    setLoading(false);
+  }, []);
+
+  // Poll for notifications every 30 seconds when logged in
+  useEffect(() => {
+    if (!user) return;
+
+    const fetchNotifications = async () => {
+      try {
+        const data = await getNotifications();
+        setNotificationCount(data.count || 0);
+      } catch {
+        // Silently fail if not authenticated
+      }
+    };
+
+    fetchNotifications();
+    const interval = setInterval(fetchNotifications, 30000);
+    return () => clearInterval(interval);
+  }, [user]);
+
   const handleLogout = () => {
+    logout();
     setUser(null);
+    setNotificationCount(0);
     navigate('/');
   };
+
+  const handleAuthSuccess = (userData) => {
+    setUser(userData);
+    navigate('/');
+  };
+
+  if (loading) {
+    return null; // Or a spinner
+  }
 
   return (
     <ConfigProvider
@@ -68,8 +115,22 @@ function App() {
 
           {user && (
             <Space size="middle">
+              {/* Location tag */}
+              <Tag 
+                color="green" 
+                icon={<EnvironmentOutlined />} 
+                style={{ padding: '4px 10px', fontSize: '13px', borderRadius: '4px' }}
+              >
+                {user.area ? `${user.area}, ${user.city}` : user.city || 'Unknown'}
+              </Tag>
+
+              {/* Notification bell */}
+              <Badge count={notificationCount} size="small">
+                <BellOutlined style={{ fontSize: '18px', color: '#595959', cursor: 'pointer' }} />
+              </Badge>
+
               <Tag color="geekblue" icon={<UserOutlined />} style={{ padding: '4px 8px', fontSize: '14px', borderRadius: '4px' }}>
-                {user.role}
+                {user.role === 'field_worker' ? 'Field Worker' : 'Volunteer'}
               </Tag>
               <Button 
                 type="default" 
@@ -86,10 +147,23 @@ function App() {
         <Content style={{ padding: '24px 16px', flex: 1 }}>
           <div className="fade-in-content">
             <Routes>
-              <Route path="/" element={user ? (user.role === 'Field Worker' || user.role === 'field_worker' ? <FieldWorker /> : <Volunteer />) : <RoleSelection />} />
-              <Route path="/login" element={user ? <Navigate to="/" /> : <LoginPage setUser={setUser} />} />
-              <Route path="/register-worker" element={user ? <Navigate to="/" /> : <RegisterFieldWorker onSuccess={(role) => setUser({ role })} />} />
-              <Route path="/register-volunteer" element={user ? <Navigate to="/" /> : <RegisterVolunteer onSuccess={(role) => setUser({ role })} />} />
+              <Route path="/" element={
+                user 
+                  ? (user.role === 'Field Worker' || user.role === 'field_worker' 
+                      ? <FieldWorker user={user} /> 
+                      : <Volunteer user={user} />
+                    ) 
+                  : <RoleSelection />
+              } />
+              <Route path="/login" element={
+                user ? <Navigate to="/" /> : <LoginPage onSuccess={handleAuthSuccess} />
+              } />
+              <Route path="/register-worker" element={
+                user ? <Navigate to="/" /> : <RegisterFieldWorker onSuccess={handleAuthSuccess} />
+              } />
+              <Route path="/register-volunteer" element={
+                user ? <Navigate to="/" /> : <RegisterVolunteer onSuccess={handleAuthSuccess} />
+              } />
             </Routes>
           </div>
         </Content>
