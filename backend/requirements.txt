@@ -1,9 +1,9 @@
 # PDF and Image Processing
 pdf2image==1.17.0
 # pytesseract removed in favor of easyocr
-easyocr==1.7.1
-numpy==1.26.4
-Pillow==10.2.0
+easyocr
+numpy
+Pillow
 
 # LLM and API handling
 google-generativeai==0.4.1
