@@ -1,0 +1,5 @@
+/* Removed Vite starter CSS to prevent conflict with Ant Design */
+body, html {
+  margin: 0;
+  padding: 0;
+}
