@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Card, Form, Input, Button, Typography, message, Alert } from 'antd';
+import { Card, Form, Input, Button, Typography, message, Alert, Select } from 'antd';
 import { MailOutlined, LockOutlined, LoginOutlined } from '@ant-design/icons';
 import { loginUser } from '../api';
 
@@ -15,7 +15,7 @@ const LoginPage = ({ onSuccess }) => {
     setLoading(true);
     setError(null);
     try {
-      const { user } = await loginUser(values.email, values.password);
+      const { user } = await loginUser(values.email, values.password, values.role);
       message.success(`Welcome back, ${user.fullName}!`);
       if (onSuccess) {
         onSuccess(user);
@@ -52,6 +52,13 @@ const LoginPage = ({ onSuccess }) => {
         )}
 
         <Form name="login_form" layout="vertical" onFinish={onFinish}>
+          <Form.Item name="role" label="Role" rules={[{ required: true, message: 'Please select your role!' }]}>
+            <Select size="large" placeholder="Select your role">
+              <Select.Option value="volunteer">Volunteer</Select.Option>
+              <Select.Option value="field_worker">Field Worker</Select.Option>
+            </Select>
+          </Form.Item>
+
           <Form.Item name="email" label="Email Address" rules={[{ required: true, message: 'Please input your email!' }, { type: 'email', message: 'Please enter a valid email!' }]}>
             <Input prefix={<MailOutlined style={{ color: '#bfbfbf' }} />} placeholder="name@example.com" size="large" />
           </Form.Item>

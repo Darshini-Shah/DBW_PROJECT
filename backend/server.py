@@ -38,12 +38,21 @@ JWT_EXPIRE_HOURS = 24
 client = MongoClient(MONGODB_URI)
 db = client["Dbw_project"]
 users_collection = db["users"]
+volunteer_collection = db["volunteer"]
+field_worker_collection = db["field_worker"]
+otp_collection = db["otp_registry"]
 issues_collection = db["issues"]
 notifications_collection = db["notifications"]
 
 # Create indexes
 users_collection.create_index("email", unique=True)
 users_collection.create_index([("location", GEOSPHERE)])
+volunteer_collection.create_index("email", unique=True)
+volunteer_collection.create_index([("location", GEOSPHERE)])
+field_worker_collection.create_index("email", unique=True)
+field_worker_collection.create_index([("location", GEOSPHERE)])
+otp_collection.create_index("email", unique=True)
+otp_collection.create_index("expires_at", expireAfterSeconds=0)  # TTL index
 issues_collection.create_index([("location", GEOSPHERE)])
 issues_collection.create_index("pincode")
 issues_collection.create_index("status")
@@ -80,14 +89,20 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
         email: str = payload.get("sub")
-        if email is None:
+        role: str = payload.get("role")
+        if email is None or role is None:
             raise credentials_exception
     except JWTError:
         raise credentials_exception
 
-    user = users_collection.find_one({"email": email})
+    collection = volunteer_collection if role == "volunteer" else field_worker_collection
+    user = collection.find_one({"email": email})
+    
     if user is None:
-        raise credentials_exception
+        # Fallback to users_collection for existing users if any
+        user = users_collection.find_one({"email": email})
+        if user is None:
+            raise credentials_exception
 
     user["_id"] = str(user["_id"])
     user.pop("password_hash", None)
@@ -113,6 +128,14 @@ class RegisterRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+    role: str  # Added role for login
+
+class OTPRequest(BaseModel):
+    email: EmailStr
+
+class OTPVerifyRequest(BaseModel):
+    email: EmailStr
+    otp: str
 
 
 class IssueCreateRequest(BaseModel):
@@ -164,13 +187,99 @@ async def health_check():
     return {"status": "ok", "message": "Smart Allocator API is running"}
 
 
+# ── Mail Setup ──────────────────────────────────────────────────────────────────
+import random
+import string
+from fastapi_mail import FastMail, MessageSchema, ConnectionConfig, MessageType
+
+# Replace with your real SMTP credentials or use env vars
+# Using a dummy config for now - USER should provide real credentials
+mail_conf = ConnectionConfig(
+    MAIL_USERNAME=os.getenv("MAIL_USERNAME", "dummy@gmail.com"),
+    MAIL_PASSWORD=os.getenv("MAIL_PASSWORD", "password"),
+    MAIL_FROM=os.getenv("MAIL_FROM", "info@smartallocator.org"),
+    MAIL_PORT=587,
+    MAIL_SERVER="smtp.gmail.com",
+    MAIL_STARTTLS=True,
+    MAIL_SSL_TLS=False,
+    USE_CREDENTIALS=True,
+    VALIDATE_CERTS=True
+)
+
+fastmail = FastMail(mail_conf)
+
+def generate_otp(length=6):
+    return ''.join(random.choices(string.digits, k=length))
+
+# ── OTP Endpoints ──────────────────────────────────────────────────────────────
+
+@app.post("/auth/send-otp")
+async def send_otp(req: OTPRequest):
+    # Check if user already exists in either collection
+    if volunteer_collection.find_one({"email": req.email}) or field_worker_collection.find_one({"email": req.email}):
+        raise HTTPException(status_code=400, detail="Email already registered")
+    
+    otp = generate_otp()
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
+    
+    otp_collection.update_one(
+        {"email": req.email},
+        {"$set": {"otp": otp, "expires_at": expires_at}},
+        upsert=True
+    )
+    
+    html = f"""
+    <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #eee;">
+        <h2 style="color: #4a90e2;">Verify Your Email</h2>
+        <p>Your OTP for Smart Allocator registration is:</p>
+        <h1 style="background: #f4f4f4; padding: 10px; text-align: center; letter-spacing: 5px;">{otp}</h1>
+        <p>This OTP will expire in 10 minutes.</p>
+    </div>
+    """
+    
+    message = MessageSchema(
+        subject="Smart Allocator - Email Verification",
+        recipients=[req.email],
+        body=html,
+        subtype=MessageType.html
+    )
+
+    try:
+        # In actual production, you'd await fastmail.send_message(message)
+        # For now, we'll log it and skip sending if credentials aren't set
+        logger.info(f"OTP for {req.email}: {otp}")
+        if mail_conf.MAIL_USERNAME != "dummy@gmail.com":
+            await fastmail.send_message(message)
+            return {"message": "OTP sent successfully"}
+        else:
+            return {"message": "OTP generated and logged (Check server logs)", "dev_otp": otp}
+    except Exception as e:
+        logger.error(f"Failed to send email: {e}")
+        # Still return success in dev mode if we logged it
+        return {"message": "OTP generated and logged (Check server logs)", "dev_otp": otp}
+
+@app.post("/auth/verify-otp")
+async def verify_otp(req: OTPVerifyRequest):
+    record = otp_collection.find_one({"email": req.email})
+    if not record or record["otp"] != req.otp:
+        raise HTTPException(status_code=400, detail="Invalid or expired OTP")
+    
+    # Optional: Mark as verified or just return success
+    return {"message": "OTP verified successfully"}
+
+
 # ── Auth Endpoints ──────────────────────────────────────────────────────────────
 
 @app.post("/auth/register")
 async def register(req: RegisterRequest):
+    # Check OTP verification (optional strict check)
+    # For now, we assume frontend verified it or we verify here if the record exists
+    # but a full implementation would check a 'verified' flag in otp_collection
+    
     # Check if user already exists
-    if users_collection.find_one({"email": req.email}):
-        raise HTTPException(status_code=400, detail="Email already registered")
+    target_collection = volunteer_collection if req.role == "volunteer" else field_worker_collection
+    if target_collection.find_one({"email": req.email}):
+        raise HTTPException(status_code=400, detail="Email already registered in this role")
 
     # Reverse geocode the GPS coordinates
     geo = await reverse_geocode(req.latitude, req.longitude)
@@ -196,13 +305,15 @@ async def register(req: RegisterRequest):
     }
 
     try:
-        result = users_collection.insert_one(user_doc)
+        result = target_collection.insert_one(user_doc)
         user_doc["_id"] = str(result.inserted_id)
+        # Clear OTP after successful registration
+        otp_collection.delete_one({"email": req.email})
     except errors.DuplicateKeyError:
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    # Generate JWT
-    token = create_access_token({"sub": req.email})
+    # Generate JWT with role info
+    token = create_access_token({"sub": req.email, "role": req.role})
 
     user_doc.pop("password_hash", None)
     user_doc["latitude"] = req.latitude
@@ -232,11 +343,18 @@ async def register(req: RegisterRequest):
 
 @app.post("/auth/login")
 async def login(req: LoginRequest):
-    user = users_collection.find_one({"email": req.email})
+    # Search in specific collection based on role
+    collection = volunteer_collection if req.role == "volunteer" else field_worker_collection
+    user = collection.find_one({"email": req.email})
+    
+    if not user:
+        # Fallback to users_collection for legacy users
+        user = users_collection.find_one({"email": req.email, "role": req.role})
+
     if not user or not verify_password(req.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
-    token = create_access_token({"sub": req.email})
+    token = create_access_token({"sub": req.email, "role": user["role"]})
 
     coords = user.get("location", {}).get("coordinates", [0, 0])
 

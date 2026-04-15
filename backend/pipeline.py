@@ -37,34 +37,36 @@ def run_ocr_on_pdf(pdf_path: str) -> str:
     Step 1: Run OCR on a single PDF file using the existing preprocessing logic.
     Returns the extracted raw text.
     """
-    from pdf2image import convert_from_path
+    import fitz  # PyMuPDF
     import easyocr
     import numpy as np
-
-    POPPLER_PATH = os.getenv("POPPLER_PATH")
 
     reader = easyocr.Reader(["en"], gpu=False)
 
     logger.info(f"OCR: Processing {os.path.basename(pdf_path)}...")
 
     try:
-        kwargs = {"pdf_path": pdf_path, "dpi": 300}
-        if POPPLER_PATH:
-            kwargs["poppler_path"] = POPPLER_PATH
-        pages = convert_from_path(**kwargs)
+        doc = fitz.open(pdf_path)
     except Exception as e:
-        logger.error(f"OCR: Failed to convert PDF: {e}")
-        raise RuntimeError(f"PDF conversion failed: {e}")
+        logger.error(f"OCR: Failed to open PDF: {e}")
+        raise RuntimeError(f"PDF open failed: {e}")
 
     full_text = f"\n\nSOURCE_FILE: {os.path.basename(pdf_path)}\n"
 
-    for i, page in enumerate(pages):
-        img_array = np.array(page)
+    for i in range(len(doc)):
+        page = doc[i]
+        pix = page.get_pixmap(dpi=300)
+        img_array = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.h, pix.w, pix.n)
+        
+        if pix.n == 4:
+            img_array = img_array[:, :, :3]
+            
         results = reader.readtext(img_array, detail=0)
         text = " ".join(results)
         full_text += f"\n--- Page {i + 1} ---\n{text}"
         logger.info(f"OCR: Finished page {i + 1}")
 
+    doc.close()
     return full_text
 
 

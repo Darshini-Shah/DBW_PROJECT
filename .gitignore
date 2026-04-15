@@ -34,3 +34,6 @@ lerna-debug.log*
 
 .env
 .venv/
+
+backend/data/output/*.txt
+backend/data/structured_output/*.json

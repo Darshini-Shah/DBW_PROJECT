@@ -41,12 +41,22 @@ export const registerUser = async (data) => {
   return { token, user };
 };
 
-export const loginUser = async (email, password) => {
-  const res = await api.post('/auth/login', { email, password });
+export const loginUser = async (email, password, role) => {
+  const res = await api.post('/auth/login', { email, password, role });
   const { token, user } = res.data;
   localStorage.setItem('token', token);
   localStorage.setItem('user', JSON.stringify(user));
   return { token, user };
+};
+
+export const sendOTP = async (email) => {
+  const res = await api.post('/auth/send-otp', { email });
+  return res.data;
+};
+
+export const verifyOTP = async (email, otp) => {
+  const res = await api.post('/auth/verify-otp', { email, otp });
+  return res.data;
 };
 
 export const getMe = async () => {

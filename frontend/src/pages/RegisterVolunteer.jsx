@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, Form, Input, Select, Button, Typography, message, Row, Col, Checkbox, Space, Alert, Spin } from 'antd';
 import { HeartOutlined, ArrowRightOutlined, CompassOutlined, EnvironmentOutlined } from '@ant-design/icons';
-import { registerUser } from '../api';
+import { registerUser, sendOTP, verifyOTP } from '../api';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
@@ -77,9 +77,56 @@ const RegisterVolunteer = ({ onSuccess }) => {
     }
   };
 
+  const [otpSent, setOtpSent] = useState(false);
+  const [otpVerified, setOtpVerified] = useState(false);
+  const [otpLoading, setOtpLoading] = useState(false);
+  const [verifyingOtp, setVerifyingOtp] = useState(false);
+  const [otp, setOtp] = useState('');
+
+  const handleSendOtp = async () => {
+    const email = form.getFieldValue('email');
+    if (!email) {
+      message.error('Please enter your email first!');
+      return;
+    }
+    setOtpLoading(true);
+    try {
+      const res = await sendOTP(email);
+      message.success('OTP sent to your email!');
+      if (res.dev_otp) message.info(`[DEV MODE] OTP: ${res.dev_otp}`, 10);
+      setOtpSent(true);
+    } catch (err) {
+      message.error(err.response?.data?.detail || 'Failed to send OTP');
+    } finally {
+      setOtpLoading(false);
+    }
+  };
+
+  const handleVerifyOtp = async () => {
+    const email = form.getFieldValue('email');
+    if (!otp) {
+      message.error('Please enter the OTP!');
+      return;
+    }
+    setVerifyingOtp(true);
+    try {
+      await verifyOTP(email, otp);
+      message.success('Email verified successfully!');
+      setOtpVerified(true);
+    } catch (err) {
+      message.error('Invalid OTP. Please try again.');
+    } finally {
+      setVerifyingOtp(false);
+    }
+  };
+
   const onFinish = async (values) => {
     if (!locationData) {
       message.error('Please detect your location first!');
+      return;
+    }
+    if (!otpVerified) {
+      message.error('Please verify your email with OTP first!');
       return;
     }
 
@@ -150,9 +197,59 @@ const RegisterVolunteer = ({ onSuccess }) => {
               </Col>
             </Row>
 
-            <Form.Item name="email" label="Email Address" rules={[{ required: true, message: 'Please input your email!' }, { type: 'email', message: 'Please enter a valid email!' }]}>
-              <Input size="large" placeholder="name@example.com" />
+            <Form.Item label="Email Address" required>
+              <Row gutter={8}>
+                <Col flex="auto">
+                  <Form.Item name="email" noStyle rules={[{ required: true, message: 'Please input your email!' }, { type: 'email', message: 'Please enter a valid email!' }]}>
+                    <Input size="large" placeholder="name@example.com" disabled={otpVerified} />
+                  </Form.Item>
+                </Col>
+                <Col>
+                  <Button 
+                    size="large" 
+                    onClick={handleSendOtp} 
+                    loading={otpLoading} 
+                    disabled={otpVerified || otpSent}
+                  >
+                    {otpSent ? 'Resend OTP' : 'Send OTP'}
+                  </Button>
+                </Col>
+              </Row>
             </Form.Item>
+
+            {otpSent && !otpVerified && (
+              <Form.Item label="Verify OTP" required>
+                <Row gutter={8}>
+                  <Col flex="auto">
+                    <Input 
+                      size="large" 
+                      placeholder="Enter 6-digit OTP" 
+                      value={otp} 
+                      onChange={(e) => setOtp(e.target.value)} 
+                    />
+                  </Col>
+                  <Col>
+                    <Button 
+                      size="large" 
+                      type="primary" 
+                      onClick={handleVerifyOtp} 
+                      loading={verifyingOtp}
+                    >
+                      Verify
+                    </Button>
+                  </Col>
+                </Row>
+              </Form.Item>
+            )}
+
+            {otpVerified && (
+              <Alert 
+                message="Email Verified" 
+                type="success" 
+                showIcon 
+                style={{ marginBottom: '16px', borderRadius: '8px' }} 
+              />
+            )}
 
             <Form.Item name="password" label="Password" rules={[{ required: true, message: 'Please input a password!' }, { min: 6, message: 'Password must be at least 6 characters!' }]}>
               <Input.Password size="large" placeholder="At least 6 characters" />
