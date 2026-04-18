@@ -1,16 +1,41 @@
+"""
+matcher.py — Volunteer ↔ Issue Matching Engine
+================================================
+New flow:
+  - For each pending issue, finds ALL qualified volunteers nearby (geo + skill).
+  - Invites them all (stores in `assignments` as status="invited").
+  - Volunteers see the invitation and can choose to accept via the API.
+  - The accept endpoint in server.py enforces the cap: only `num_vol_needed`
+    volunteers are allowed to accept. Extras stay as "invited" until the cap is met.
+  - Once cap is met, issue status → "ongoing".
+"""
+
 import os
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 from pymongo import MongoClient, errors
 from dotenv import load_dotenv
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
+# ── Urgency radius table (mirrors geocoding.py logic) ────────────────────────
+
+def get_radius_km_for_urgency(urgency: int) -> float:
+    if urgency <= 3:
+        return 5.0
+    elif urgency <= 5:
+        return 15.0
+    elif urgency <= 7:
+        return 30.0
+    elif urgency <= 9:
+        return 60.0
+    else:
+        return 100.0
+
+
+# ── Matcher ───────────────────────────────────────────────────────────────────
 
 class VolunteerMatcher:
     """Manages the matching of volunteers to community issues."""
@@ -19,128 +44,183 @@ class VolunteerMatcher:
         try:
             self.client = MongoClient(uri)
             self.db = self.client[db_name]
-            self.issues_collection = self.db["issues"]
-            self.volunteers_collection = self.db["volunteer"]
+            self.issues_collection      = self.db["issues"]
+            self.volunteers_collection  = self.db["volunteer"]
             self.assignments_collection = self.db["assignments"]
             logger.info(f"Connected to database: {db_name}")
         except errors.ConnectionFailure as e:
             logger.error(f"Could not connect to MongoDB: {e}")
             raise
 
-    def get_unassigned_volunteers(self) -> List[Dict[str, Any]]:
-        """Fetch volunteers who are not yet in the assignments collection."""
-        # 1. Get all assigned volunteer IDs
-        assigned_ids = self.assignments_collection.distinct("_id")
-        
-        # 2. Query volunteers whose _id is not in that list
-        query = {"_id": {"$nin": assigned_ids}}
-        return list(self.volunteers_collection.find(query))
+    # ── Fetch pending issues ──────────────────────────────────────────────────
 
     def get_pending_issues(self) -> List[Dict[str, Any]]:
-        """Fetch issues that don't have enough assignments yet, sorted by urgency."""
-        # For simplicity, we'll fetch all issues and filter those already fully assigned
-        # Logic: If surid is in assignments 'number of volunteer need' times, it's fulfilled.
-        
-        all_issues = list(self.issues_collection.find().sort("scale of urgency", -1))
-        pending_issues = []
-        
+        """
+        Fetch issues that still need more accepted volunteers, sorted by urgency (desc).
+        An issue is pending if: accepted_count < num_vol_needed AND status != "ongoing"/"completed"
+        """
+        all_issues = list(
+            self.issues_collection.find(
+                {"status": {"$in": ["pending", "open"]}}
+            ).sort("scale of urgency", -1)
+        )
+
+        pending = []
         for issue in all_issues:
             surid = issue.get("surid")
-            required = issue.get("number of volunteer need", 1)
-            # Ensure required is an int
+            num_needed = self._get_vol_needed(issue)
+
+            accepted_count = self.assignments_collection.count_documents(
+                {"surid": surid, "status": "accepted"}
+            )
+
+            if accepted_count < num_needed:
+                issue["_remaining_slots"] = num_needed - accepted_count
+                pending.append(issue)
+
+        return pending
+
+    def _get_vol_needed(self, issue: dict) -> int:
+        """Safely extract num_vol_needed as int."""
+        raw = issue.get("number of volunteer need") or issue.get("num_vol_needed") or 1
+        try:
+            return max(1, int(raw))
+        except (ValueError, TypeError):
+            return 1
+
+    # ── Find qualified volunteers ─────────────────────────────────────────────
+
+    def find_qualified_volunteers(self, issue: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Returns all volunteers who are:
+          1. Within geo radius (based on issue urgency)
+          2. Have at least one skill matching req_skillset
+        Falls back to city/area text match if no coordinates.
+        """
+        req_skills = set(issue.get("req_skillset", []))
+        urgency    = int(issue.get("scale of urgency") or 5)
+        radius_m   = get_radius_km_for_urgency(urgency) * 1000
+
+        coords = issue.get("location", {}).get("coordinates") if isinstance(issue.get("location"), dict) else None
+
+        # ── Geo query if coordinates exist ────────────────────────────────────
+        if coords and len(coords) == 2:
+            geo_query = {
+                "location": {
+                    "$nearSphere": {
+                        "$geometry": {
+                            "type": "Point",
+                            "coordinates": coords,  # [lng, lat]
+                        },
+                        "$maxDistance": radius_m,
+                    }
+                }
+            }
             try:
-                required = int(required) if required is not None else 1
-            except ValueError:
-                required = 1
-                
-            current_assignments = self.assignments_collection.count_documents({"surid": surid})
-            
-            if current_assignments < required:
-                issue["remaining_need"] = required - current_assignments
-                pending_issues.append(issue)
-        
-        return pending_issues
+                volunteers = list(self.volunteers_collection.find(geo_query))
+            except Exception as e:
+                logger.warning(f"Geo query failed, falling back to all volunteers: {e}")
+                volunteers = list(self.volunteers_collection.find())
+        else:
+            # ── Fallback: text match on city/area ─────────────────────────────
+            area_hint = (issue.get("area") or issue.get("geographical area") or "").lower()
+            city_hint = (issue.get("city") or "").lower()
+            volunteers = list(self.volunteers_collection.find())
+            if area_hint or city_hint:
+                volunteers = [
+                    v for v in volunteers
+                    if area_hint in (v.get("area") or "").lower()
+                    or city_hint in (v.get("city") or "").lower()
+                ]
+            logger.warning(f"Issue {issue.get('surid')} has no coordinates — using text fallback.")
 
-    def find_match(self, issue: Dict[str, Any], available_volunteers: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        """Finds the best volunteer match based on Location and Skills."""
-        issue_location = issue.get("geographical area", "").lower()
-        issue_skills_needed = issue.get("type of volunteer need", "").lower()
-        
-        best_match = None
-        
-        # 1. Try to match both Location AND Skills
-        for vol in available_volunteers:
-            vol_location = vol.get("Location", "").lower()
-            vol_skills = vol.get("Skills", "").lower()
-            
-            if issue_location in vol_location or vol_location in issue_location:
-                if any(skill.strip() in vol_skills for skill in issue_skills_needed.split(",")):
-                    return vol
+        # ── Skill filter (set intersection) ───────────────────────────────────
+        if req_skills:
+            volunteers = [
+                v for v in volunteers
+                if req_skills & set(v.get("skills", []))
+            ]
 
-        # 2. Fallback: Match by Location only
-        for vol in available_volunteers:
-            vol_location = vol.get("Location", "").lower()
-            if issue_location in vol_location or vol_location in issue_location:
-                return vol
-                
-        # 3. Last resort: Return first available (if you want to ensure any assignment)
-        # return available_volunteers[0] if available_volunteers else None
-        return None
+        return volunteers
+
+    # ── Main matching loop ────────────────────────────────────────────────────
 
     def perform_matching(self):
-        """Main matching loop."""
+        """
+        For each pending issue:
+          1. Find all qualified volunteers (geo + skill).
+          2. Invite those not already invited.
+          3. Does NOT force-assign — volunteers must accept via the API.
+        """
         pending_issues = self.get_pending_issues()
         if not pending_issues:
-            logger.info("No pending issues found for matching.")
+            logger.info("No pending issues to match.")
             return
 
-        available_volunteers = self.get_unassigned_volunteers()
-        if not available_volunteers:
-            logger.info("No available volunteers found.")
-            return
+        total_invites = 0
 
-        assignments_made = 0
-        
         for issue in pending_issues:
-            surid = issue.get("surid")
-            remaining = issue.get("remaining_need", 1)
-            
-            logger.info(f"Processing Issue {surid} (Urgency: {issue.get('scale of urgency')}, Needs: {remaining})")
-            
-            for _ in range(remaining):
-                if not available_volunteers:
-                    break
-                    
-                match = self.find_match(issue, available_volunteers)
-                
-                if match:
-                    # Create assignment
-                    assignment = {
-                        "surid": surid,
-                        "volunteer_id": match.get("_id"),
-                        "volunteer_name": match.get("Volunteer Name"),
-                        "issue_description": issue.get("what is the issue"),
-                        "geographical area": issue.get("geographical area"),
-                        "assigned_at": datetime.now(),
-                        "status": "Assigned"
-                    }
-                    
-                    self.assignments_collection.insert_one(assignment)
-                    logger.info(f"  Successfully assigned {match.get('Volunteer Name')} to {surid}")
-                    
-                    # Remove from available list for this session
-                    available_volunteers.remove(match)
-                    assignments_made += 1
-                else:
-                    logger.warning(f"  No suitable match found for {surid}")
-                    break # Stop trying to fill this issue if no matches found
-                    
-        logger.info(f"Matching session complete. Total assignments made: {assignments_made}")
+            surid       = issue.get("surid")
+            issue_id    = str(issue["_id"])
+            num_needed  = self._get_vol_needed(issue)
+            remaining   = issue["_remaining_slots"]
+
+            logger.info(
+                f"Issue {surid} | urgency={issue.get('scale of urgency')} "
+                f"| needs {num_needed} | {remaining} slot(s) open"
+            )
+
+            # Already invited volunteer ids for this issue
+            already_invited = set(
+                self.assignments_collection.distinct("volunteer_id", {"surid": surid})
+            )
+
+            qualified = self.find_qualified_volunteers(issue)
+
+            # Only invite volunteers not already invited/accepted
+            new_invites = [v for v in qualified if v["_id"] not in already_invited]
+
+            if not new_invites:
+                logger.info(f"  {surid}: No new volunteers to invite.")
+                continue
+
+            # Create invitation records
+            now = datetime.now(timezone.utc).isoformat()
+            invite_docs = [
+                {
+                    "surid":           surid,
+                    "issue_id":        issue_id,
+                    "volunteer_id":    v["_id"],
+                    "volunteer_name":  v.get("fullName", ""),
+                    "volunteer_email": v.get("email", ""),
+                    "volunteer_phone": v.get("phone", ""),
+                    "status":          "invited",   # invited → accepted | declined
+                    "invited_at":      now,
+                    "accepted_at":     None,
+                }
+                for v in new_invites
+            ]
+
+            self.assignments_collection.insert_many(invite_docs)
+            total_invites += len(invite_docs)
+
+            logger.info(
+                f"  {surid}: Invited {len(invite_docs)} volunteer(s) "
+                f"(needed: {num_needed}, accepting first {num_needed} who respond)"
+            )
+
+        logger.info(f"Matching session complete. Total new invitations sent: {total_invites}")
+
+    def close(self):
+        self.client.close()
+
+
+# ── Entry point ───────────────────────────────────────────────────────────────
 
 def main():
     load_dotenv()
     mongodb_uri = os.getenv("MONGODB_URI")
-    
+
     if not mongodb_uri:
         logger.error("MONGODB_URI not found in .env")
         return
@@ -148,8 +228,10 @@ def main():
     try:
         matcher = VolunteerMatcher(mongodb_uri)
         matcher.perform_matching()
+        matcher.close()
     except Exception as e:
-        logger.error(f"Error during matching process: {e}")
+        logger.error(f"Matching process failed: {e}")
+
 
 if __name__ == "__main__":
     main()
