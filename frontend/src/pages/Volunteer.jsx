@@ -25,13 +25,14 @@ const Volunteer = ({ user }) => {
   const [radiusKm, setRadiusKm] = useState(15);
   const navigate = useNavigate();
 
-  const fetchIssues = useCallback(async () => {
+  const fetchIssues = useCallback(async (overridingRadius = null) => {
     setLoading(true);
     try {
+      const activeRadius = overridingRadius !== null ? overridingRadius : radiusKm;
       const params = {
         latitude: user?.latitude,
         longitude: user?.longitude,
-        radius_km: radiusKm,
+        radius_km: activeRadius,
         status_filter: 'open',
       };
       const data = await getIssues(params);
@@ -47,9 +48,10 @@ const Volunteer = ({ user }) => {
   useEffect(() => {
     fetchIssues();
     // Auto-refresh every 30s
-    const interval = setInterval(fetchIssues, 30000);
+    const interval = setInterval(() => fetchIssues(), 30000);
     return () => clearInterval(interval);
-  }, [fetchIssues]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]); // Only re-fetch if user changes, slider uses onChangeComplete
 
   const handleAccept = async (issueId) => {
     setAccepting(issueId);

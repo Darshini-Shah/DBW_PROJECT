@@ -137,4 +137,9 @@ export const completeTask = async (issueId) => {
   return res.data;
 };
 
+export const startTask = async (issueId) => {
+  const res = await api.post(`/api/issues/${issueId}/start`);
+  return res.data;
+};
+
 export default api;

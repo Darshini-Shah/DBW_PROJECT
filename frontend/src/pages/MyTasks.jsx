@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Card, List, Typography, Button, Space, Tag, Modal, InputNumber, message, Divider, Empty, Spin } from 'antd';
-import { CheckCircleOutlined, UserOutlined, ClockCircleOutlined, SettingOutlined, TrophyOutlined } from '@ant-design/icons';
-import { getMyTasks, updateVolunteerDays, completeTask } from '../api';
+import { Card, List, Typography, Button, Space, Tag, Modal, InputNumber, message, Divider, Empty, Spin, Alert, Avatar } from 'antd';
+import { CheckCircleOutlined, UserOutlined, ClockCircleOutlined, SettingOutlined, TrophyOutlined, PlayCircleOutlined } from '@ant-design/icons';
+import { getMyTasks, updateVolunteerDays, completeTask, startTask } from '../api';
 
 const { Title, Text } = Typography;
 
@@ -57,6 +57,16 @@ const MyTasks = ({ user }) => {
     }
   };
 
+  const handleStartTask = async (taskId) => {
+    try {
+      await startTask(taskId);
+      message.success('Task started! Go get them.');
+      fetchTasks();
+    } catch (err) {
+      message.error('Failed to start task');
+    }
+  };
+
   if (loading) return <div style={{ textAlign: 'center', padding: '100px' }}><Spin size="large" /></div>;
 
   return (
@@ -76,7 +86,17 @@ const MyTasks = ({ user }) => {
             <Card 
               style={{ marginBottom: '16px', borderRadius: '12px', border: task.status === 'completed' ? '1px solid #d9d9d9' : '1px solid #1890ff' }}
               actions={[
-                task.is_manager && task.status !== 'completed' && (
+                task.is_manager && !task.start_date && task.status !== 'completed' && (
+                  <Button 
+                    type="primary" 
+                    icon={<PlayCircleOutlined />} 
+                    style={{ backgroundColor: '#52c41a', borderColor: '#52c41a' }}
+                    onClick={() => handleStartTask(task._id)}
+                  >
+                    Start Task
+                  </Button>
+                ),
+                task.is_manager && (task.start_date || task.status === 'completed') && (
                   <Button 
                     type="primary" 
                     icon={<SettingOutlined />} 
@@ -94,13 +114,26 @@ const MyTasks = ({ user }) => {
                 </div>
                 <Space>
                   {task.is_manager && <Tag color="gold" icon={<TrophyOutlined />}>Task Manager</Tag>}
-                  <Tag color={task.status === 'completed' ? 'green' : 'blue'}>
+                  <Tag color={task.status === 'completed' ? 'green' : task.status === 'in_progress' ? 'orange' : 'blue'}>
                     {task.status.toUpperCase()}
                   </Tag>
                 </Space>
               </div>
               <Divider style={{ margin: '12px 0' }} />
               <p>{task['what is the issue'] || task.description}</p>
+              
+              <Space direction="vertical" style={{ width: '100%', marginBottom: '16px' }}>
+                {task.start_date && (
+                  <Text type="secondary" style={{ fontSize: '12px' }}>
+                    <PlayCircleOutlined /> Started: {new Date(task.start_date).toLocaleString()}
+                  </Text>
+                )}
+                {task.end_date && (
+                  <Text type="secondary" style={{ fontSize: '12px' }}>
+                    <CheckCircleOutlined /> Completed: {new Date(task.end_date).toLocaleString()}
+                  </Text>
+                )}
+              </Space>
               
               <div style={{ background: '#f5f5f5', padding: '12px', borderRadius: '8px' }}>
                 <Text strong style={{ display: 'block', marginBottom: '8px' }}>Team:</Text>
@@ -177,22 +210,5 @@ const MyTasks = ({ user }) => {
     </div>
   );
 };
-
-// Helper components missing from antd in this context
-const Alert = ({ message, description, type, showIcon, style }) => (
-  <div style={{ ...style, border: '1px solid #91d5ff', backgroundColor: '#e6f7ff', padding: '12px', borderRadius: '8px', display: 'flex', gap: '8px' }}>
-    {showIcon && <SettingOutlined style={{ color: '#1890ff' }} />}
-    <div>
-      <div style={{ fontWeight: 600 }}>{message}</div>
-      <div style={{ fontSize: '12px' }}>{description}</div>
-    </div>
-  </div>
-);
-
-const Avatar = ({ icon, style }) => (
-  <div style={{ ...style, width: '32px', height: '32px', borderRadius: '50%', backgroundColor: '#ccc', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-    {icon}
-  </div>
-);
 
 export default MyTasks;
