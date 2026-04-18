@@ -458,7 +458,35 @@ async def get_issues(
         query["pincode"] = pincode
 
     try:
-        issues = list(issues_collection.find(query).limit(50))
+        issues = list(issues_collection.find(query).limit(100))
+        
+        # If the requester is a volunteer, filter by matching skills and location (optional but recommended by user)
+        if current_user.get("role") == "volunteer":
+            filtered_issues = []
+            user_skills = [s.lower() for s in current_user.get("skills", [])]
+            user_area = current_user.get("area", "").lower()
+            user_city = current_user.get("city", "").lower()
+
+            for issue in issues:
+                issue_category = issue.get("type of issue", "").lower()
+                issue_area = issue.get("geographical area", "").lower()
+                
+                # Check for skill match
+                skill_match = any(user_skill in issue_category or issue_category in user_skill for user_skill in user_skills)
+                
+                # Check for area match (city or specific area)
+                area_match = (user_area and user_area in issue_area) or \
+                             (user_city and user_city in issue_area) or \
+                             (issue_area and issue_area in user_area)
+
+                # Volunteer sees it if it matches skills OR location (as fallback, or both)
+                # Following matcher.py's spirit: Location match is often enough, but Skills prioritize.
+                if skill_match or area_match:
+                    issue["_id"] = str(issue["_id"])
+                    filtered_issues.append(issue)
+            
+            return {"issues": filtered_issues, "count": len(filtered_issues)}
+
         for issue in issues:
             issue["_id"] = str(issue["_id"])
         return {"issues": issues, "count": len(issues)}
@@ -668,6 +696,31 @@ async def update_volunteer_days(issue_id: str, req: UpdateDaysRequest, current_u
     return {"message": "Days updated successfully"}
 
 
+@app.post("/api/issues/{issue_id}/start")
+async def start_issue(issue_id: str, current_user: dict = Depends(get_current_user)):
+    """Manager marks task as started."""
+    issue = issues_collection.find_one({"_id": ObjectId(issue_id)})
+    if not issue:
+        raise HTTPException(status_code=404, detail="Issue not found")
+
+    assigned_vols = issue.get("assigned_volunteers", [])
+    if not assigned_vols:
+        raise HTTPException(status_code=400, detail="No volunteers assigned")
+
+    manager = max(assigned_vols, key=lambda x: x.get("points", 0))
+    if manager["id"] != current_user["_id"]:
+        raise HTTPException(status_code=403, detail="Only the manager can start the task")
+
+    if issue.get("start_date"):
+        raise HTTPException(status_code=400, detail="Task already started")
+
+    issues_collection.update_one(
+        {"_id": ObjectId(issue_id)},
+        {"$set": {"start_date": datetime.now(timezone.utc).isoformat(), "status": "in_progress"}}
+    )
+    return {"message": "Task started successfully"}
+
+
 @app.post("/api/issues/{issue_id}/complete")
 async def complete_issue(issue_id: str, current_user: dict = Depends(get_current_user)):
     """Manager marks task as done. Points are awarded."""
@@ -686,10 +739,15 @@ async def complete_issue(issue_id: str, current_user: dict = Depends(get_current
     if manager["id"] != current_user["_id"]:
         raise HTTPException(status_code=403, detail="Only the manager can complete the task")
 
-    # Update issue status
+    # Update issue status and end date
     issues_collection.update_one(
         {"_id": ObjectId(issue_id)},
-        {"$set": {"status": "completed"}}
+        {
+            "$set": {
+                "status": "completed",
+                "end_date": datetime.now(timezone.utc).isoformat()
+            }
+        }
     )
 
     # Award points to volunteers: days_worked * 5

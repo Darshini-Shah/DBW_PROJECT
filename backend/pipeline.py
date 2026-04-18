@@ -25,11 +25,8 @@ TEMP_IMAGE_DIR = os.path.join(BACKEND_DIR, "data", "temp_images")
 RAW_TEXT_FILE = os.path.join(BACKEND_DIR, "data", "output", "raw_extracted_content.txt")
 STRUCTURED_OUTPUT_DIR = os.path.join(BACKEND_DIR, "data", "structured_output")
 
-# Ensure directories exist
-os.makedirs(INPUT_DIR, exist_ok=True)
+# Ensure directories exist (only for truly temporary processing if needed)
 os.makedirs(TEMP_IMAGE_DIR, exist_ok=True)
-os.makedirs(os.path.dirname(RAW_TEXT_FILE), exist_ok=True)
-os.makedirs(STRUCTURED_OUTPUT_DIR, exist_ok=True)
 
 
 def run_ocr_on_pdf(pdf_path: str) -> str:
@@ -258,46 +255,94 @@ async def process_survey_pdf(
 ) -> Dict[str, Any]:
     """
     Main pipeline entry point: PDF bytes → OCR → AI structuring → DB upload.
-    Returns a summary of what was extracted and uploaded.
+    All files are stored in MongoDB GridFS instead of local folders.
     """
-    # Step 0: Create a unique filename using timestamp
+    import gridfs
+    from pymongo import MongoClient
+
+    MONGODB_URI = os.getenv("MONGODB_URI")
+    client = MongoClient(MONGODB_URI)
+    db = client["Dbw_project"]
+    fs = gridfs.GridFS(db)
+
+    # Step 0: Create a unique filename and save to GridFS
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     unique_name = f"{timestamp}_{filename}"
-    pdf_path = os.path.join(INPUT_DIR, unique_name)
 
-    with open(pdf_path, "wb") as f:
+    # Store input PDF in GridFS
+    pdf_file_id = fs.put(
+        pdf_bytes, 
+        filename=unique_name, 
+        content_type="application/pdf",
+        metadata={
+            "reporter_id": reporter_id,
+            "type": "input_pdf",
+            "original_name": filename,
+            "timestamp": timestamp
+        }
+    )
+    logger.info(f"GridFS: Saved input PDF with ID {pdf_file_id}")
+
+    # Temporary local save just for OCR (PyMuPDF needs a file path or stream, 
+    # but for simplicity of the existing logic we use a temp file)
+    temp_pdf_path = os.path.join(TEMP_IMAGE_DIR, f"temp_{unique_name}")
+    with open(temp_pdf_path, "wb") as f:
         f.write(pdf_bytes)
 
     try:
         # Step 1: OCR
         logger.info("Pipeline Step 1/3: Running OCR...")
-        raw_text = run_ocr_on_pdf(pdf_path)
+        raw_text = run_ocr_on_pdf(temp_pdf_path)
 
         if not raw_text.strip():
             raise RuntimeError("OCR produced no text from the PDF")
 
-        # Save raw text for reference
-        raw_text_path = os.path.join(
-            BACKEND_DIR, "data", "output", f"raw_{unique_name}.txt"
+        # Store raw text in GridFS
+        text_file_id = fs.put(
+            raw_text.encode("utf-8"), 
+            filename=f"raw_{unique_name}.txt",
+            content_type="text/plain",
+            metadata={
+                "reporter_id": reporter_id,
+                "type": "raw_extraction",
+                "pdf_id": pdf_file_id
+            }
         )
-        with open(raw_text_path, "w", encoding="utf-8") as f:
-            f.write(raw_text)
+        logger.info(f"GridFS: Saved raw text with ID {text_file_id}")
 
         # Step 2: AI Structuring
         logger.info("Pipeline Step 2/3: AI structuring with Gemini...")
         structured_surveys = run_ai_structuring(raw_text)
 
-        # Save structured output for reference
-        structured_path = os.path.join(
-            STRUCTURED_OUTPUT_DIR, f"structured_{unique_name}.json"
+        # Store structured JSON in GridFS
+        json_file_id = fs.put(
+            json.dumps(structured_surveys, indent=4).encode("utf-8"),
+            filename=f"structured_{unique_name}.json",
+            content_type="application/json",
+            metadata={
+                "reporter_id": reporter_id,
+                "type": "structured_data",
+                "pdf_id": pdf_file_id
+            }
         )
-        with open(structured_path, "w", encoding="utf-8") as f:
-            json.dump(structured_surveys, f, indent=4)
+        logger.info(f"GridFS: Saved structured JSON with ID {json_file_id}")
 
-        # Step 3: Upload to MongoDB
-        logger.info("Pipeline Step 3/3: Uploading to MongoDB...")
+        # Step 3: Upload to MongoDB Issues collection
+        logger.info("Pipeline Step 3/3: Uploading to MongoDB Issues collection...")
         survey_ids = upload_surveys_to_db(
             structured_surveys, reporter_id, reporter_name, reporter_location
+        )
+        
+        # Link the files to the survey IDs if needed (optional)
+        db["issues"].update_many(
+            {"surid": {"$in": survey_ids}},
+            {"$set": {
+                "gridfs_files": {
+                    "pdf_id": str(pdf_file_id),
+                    "raw_text_id": str(text_file_id),
+                    "structured_json_id": str(json_file_id)
+                }
+            }}
         )
 
         return {
@@ -306,6 +351,11 @@ async def process_survey_pdf(
             "issues_found": len(structured_surveys),
             "survey_ids": survey_ids,
             "surveys": structured_surveys,
+            "storage_ids": {
+                "pdf": str(pdf_file_id),
+                "raw_text": str(text_file_id),
+                "json": str(json_file_id)
+            }
         }
 
     except Exception as e:
@@ -319,6 +369,7 @@ async def process_survey_pdf(
         }
 
     finally:
-        # Clean up the uploaded PDF
-        if os.path.exists(pdf_path):
-            os.remove(pdf_path)
+        # Clean up the temporary local PDF
+        if os.path.exists(temp_pdf_path):
+            os.remove(temp_pdf_path)
+        client.close()
