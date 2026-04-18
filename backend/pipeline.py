@@ -70,7 +70,14 @@ def run_ocr_on_pdf(pdf_path: str) -> str:
 def run_ai_structuring(raw_text: str) -> List[Dict[str, Any]]:
     """
     Step 2: Send raw OCR text to Gemini to extract structured survey data.
-    Returns a list of structured survey dictionaries.
+    
+    EXTRACTED FROM PDF (by LLM):
+      type_of_issue, what_is_the_issue, date, area, city, pincode
+      num_ppl_affected (only if stated), num_vol_needed (only if stated)
+
+    NOT extracted here (handled by system / model.py):
+      surid, reported_by, created_at, status, source,
+      urgency, coordinates, req_skillset, estimated_days, max_points
     """
     import google.generativeai as genai
 
@@ -78,29 +85,74 @@ def run_ai_structuring(raw_text: str) -> List[Dict[str, Any]]:
     model = genai.GenerativeModel("gemini-2.5-flash")
 
     prompt = f"""
-    You are an expert data analyst working for an NGO. 
-    Below is raw text extracted via OCR from multiple hand-filled community survey forms.
-    
-    TASK:
-    - Identify individual survey reports in the text.
-    - Extract the following fields for each survey:
-      1. date: The date of the report (use YYYY-MM-DD format if possible).
-      2. geographical area: The location or area mentioned.
-      3. type of issue: Category of the problem (e.g., Food, Water, Medical, Logistics, Sanitation/Infrastructure).
-      4. number of volunteer need: Estimated number of volunteers required (integer).
-      5. what is the issue: A short description of the specific problem.
-      6. scale of urgency: A value from 1 to 10 (10 being most urgent).
-      7. type of volunteer need: Skills or roles required (e.g., Medical Professional, General Labor, Driver).
-      8. scale of effect: A value from 1 to 10 (representing amount of people/area affected).
+You are a data extraction specialist for an NGO disaster-relief platform.
+Below is raw text extracted via OCR from hand-filled community survey forms.
 
-    - If any field is missing, use null.
-    - Format the final output as a VALID JSON LIST of objects.
+YOUR TASK:
+Identify each individual survey report in the text and extract the fields below.
 
-    RAW TEXT:
-    {raw_text}
-    """
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+FIELDS TO EXTRACT (for each survey):
 
-    logger.info("AI: Sending text to Gemini for structuring...")
+1. type_of_issue
+   Short category label. Pick exactly ONE from:
+   Food | Water | Medical | Logistics | Sanitation/Infrastructure | Education | Other
+
+2. what_is_the_issue
+   Write a clear, concise 1-2 sentence description of the problem.
+   Synthesize and clean up OCR noise — DO NOT copy raw text verbatim.
+
+3. date
+   Date of the report in YYYY-MM-DD format.
+   → Set to null if not mentioned.
+
+4. area
+   Locality / neighbourhood name if explicitly stated in the paper.
+   → Set to null if NOT clearly written.
+
+5. city
+   City name if explicitly stated in the paper.
+   → Set to null if NOT clearly written.
+
+6. pincode
+   Postal/PIN code if explicitly written in the paper.
+   → Set to null if NOT clearly written.
+
+7. num_ppl_affected
+   Integer count of people affected.
+   → Set to null ONLY if the number is NOT stated in the paper.
+   → Do NOT guess or estimate — extract it or return null.
+
+8. num_vol_needed
+   Integer count of volunteers needed.
+   → Set to null ONLY if the number is NOT stated in the paper.
+   → Do NOT guess or estimate — extract it or return null.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STRICT RULES:
+- DO NOT fabricate any values. If a field is absent from the paper, use null.
+- DO NOT add fields not listed above.
+- Output ONLY a valid JSON array — one object per survey found.
+
+EXAMPLE OUTPUT:
+[
+  {{
+    "type_of_issue": "Medical",
+    "what_is_the_issue": "Elderly residents are experiencing respiratory issues following flooding.",
+    "date": "2026-04-15",
+    "area": "Velachery",
+    "city": "Chennai",
+    "pincode": "600042",
+    "num_ppl_affected": 80,
+    "num_vol_needed": null
+  }}
+]
+
+RAW TEXT:
+{raw_text}
+"""
+
+    logger.info("AI: Sending text to Gemini for structured extraction...")
     response = model.generate_content(prompt)
 
     raw_json = response.text.replace("```json", "").replace("```", "").strip()

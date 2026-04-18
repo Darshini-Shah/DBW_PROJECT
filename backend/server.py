@@ -43,6 +43,7 @@ field_worker_collection = db["field_worker"]
 otp_collection = db["otp_registry"]
 issues_collection = db["issues"]
 notifications_collection = db["notifications"]
+assignments_collection = db["assignments"]   # volunteer invites & acceptances
 
 # Create indexes
 users_collection.create_index("email", unique=True)
@@ -56,6 +57,8 @@ otp_collection.create_index("expires_at", expireAfterSeconds=0)  # TTL index
 issues_collection.create_index([("location", GEOSPHERE)])
 issues_collection.create_index("pincode")
 issues_collection.create_index("status")
+assignments_collection.create_index([("surid", 1), ("volunteer_id", 1)], unique=True, sparse=True)
+assignments_collection.create_index("volunteer_id")
 
 logger.info("MongoDB connected and indexes ensured.")
 
@@ -591,49 +594,93 @@ async def create_issue(
 
 @app.post("/api/issues/{issue_id}/accept")
 async def accept_issue(issue_id: str, current_user: dict = Depends(get_current_user)):
-    """Volunteer accepts/claims an issue."""
+    """
+    Volunteer accepts an issue they were invited to.
+    Rules:
+      - Only `num_vol_needed` volunteers can accept (first-come, first-served).
+      - Once the cap is reached, remaining invitees see "fully staffed".
+      - When cap is met, issue status → "ongoing".
+    """
     if current_user.get("role") != "volunteer":
         raise HTTPException(status_code=403, detail="Only volunteers can accept issues")
 
     try:
-        issue = issues_collection.find_one({"_id": ObjectId(issue_id), "status": "open"})
+        issue = issues_collection.find_one({"_id": ObjectId(issue_id)})
         if not issue:
-            raise HTTPException(status_code=404, detail="Issue not found or no longer open")
+            raise HTTPException(status_code=404, detail="Issue not found")
 
-        assigned_count = len(issue.get("assigned_volunteers", []))
-        needed_count = issue.get("number of volunteer need", 1)
+        if issue.get("status") not in ("open", "pending"):
+            raise HTTPException(status_code=400, detail=f"Issue is already {issue['status']}")
 
-        if any(v["id"] == current_user["_id"] for v in issue.get("assigned_volunteers", [])):
-            raise HTTPException(status_code=400, detail="You have already accepted this issue")
-
-        new_status = "open"
-        if assigned_count + 1 >= needed_count:
-            new_status = "assigned"
-
-        current_points = current_user.get("points", 0)
-
-        result = issues_collection.update_one(
-            {"_id": ObjectId(issue_id), "status": "open"},
-            {
-                "$set": {"status": new_status},
-                "$addToSet": {
-                    "assigned_volunteers": {
-                        "id": current_user["_id"],
-                        "name": current_user["fullName"],
-                        "phone": current_user["phone"],
-                        "points": current_points,
-                        "days_worked": 0,
-                        "accepted_at": datetime.now(timezone.utc).isoformat(),
-                    }
-                },
-            },
+        num_needed = int(
+            issue.get("number of volunteer need")
+            or issue.get("num_vol_needed")
+            or 1
         )
 
-        if result.modified_count == 0:
-            raise HTTPException(status_code=404, detail="Failed to accept task. It may be fully assigned.")
+        vol_id = current_user["_id"]
 
-        logger.info(f"Issue {issue_id} accepted by {current_user['fullName']}")
-        return {"message": "Issue accepted successfully"}
+        # Check if there's an invite record for this volunteer
+        invite = assignments_collection.find_one(
+            {"issue_id": issue_id, "volunteer_id": vol_id}
+        )
+
+        if invite and invite.get("status") == "accepted":
+            raise HTTPException(status_code=400, detail="You have already accepted this issue")
+
+        # Count how many have already accepted
+        accepted_count = assignments_collection.count_documents(
+            {"issue_id": issue_id, "status": "accepted"}
+        )
+
+        if accepted_count >= num_needed:
+            raise HTTPException(
+                status_code=400,
+                detail=f"This issue is already fully staffed ({num_needed}/{num_needed} volunteers)"
+            )
+
+        now = datetime.now(timezone.utc).isoformat()
+
+        if invite:
+            # Update existing invitation to accepted
+            assignments_collection.update_one(
+                {"_id": invite["_id"]},
+                {"$set": {"status": "accepted", "accepted_at": now}}
+            )
+        else:
+            # Volunteer accepted directly (e.g. via app, not through matcher invite)
+            assignments_collection.insert_one({
+                "surid":           issue.get("surid"),
+                "issue_id":        issue_id,
+                "volunteer_id":    vol_id,
+                "volunteer_name":  current_user.get("fullName", ""),
+                "volunteer_email": current_user.get("email", ""),
+                "volunteer_phone": current_user.get("phone", ""),
+                "status":          "accepted",
+                "invited_at":      None,
+                "accepted_at":     now,
+            })
+
+        new_accepted_count = accepted_count + 1
+
+        # If we just hit the cap → mark issue as ongoing
+        if new_accepted_count >= num_needed:
+            issues_collection.update_one(
+                {"_id": ObjectId(issue_id)},
+                {"$set": {"status": "ongoing"}}
+            )
+            logger.info(f"Issue {issue_id} is now fully staffed → status: ongoing")
+
+        logger.info(
+            f"Issue {issue_id} accepted by {current_user['fullName']} "
+            f"({new_accepted_count}/{num_needed})"
+        )
+        return {
+            "message": "Issue accepted successfully",
+            "accepted": new_accepted_count,
+            "needed": num_needed,
+            "fully_staffed": new_accepted_count >= num_needed,
+        }
 
     except HTTPException:
         raise
