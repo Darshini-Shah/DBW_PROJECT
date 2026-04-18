@@ -260,8 +260,9 @@ async def process_survey_pdf(
     Main pipeline entry point: PDF bytes → OCR → AI structuring → DB upload.
     Returns a summary of what was extracted and uploaded.
     """
-    # Save the PDF to a temp file
-    unique_name = f"{uuid.uuid4().hex}_{filename}"
+    # Step 0: Create a unique filename using timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    unique_name = f"{timestamp}_{filename}"
     pdf_path = os.path.join(INPUT_DIR, unique_name)
 
     with open(pdf_path, "wb") as f:
