@@ -1,0 +1,20 @@
+{
+  "success": true,
+  "filename": "velacherry.pdf",
+  "issues_found": 1,
+  "survey_ids": [
+    "SUR-006"
+  ],
+  "surveys": [
+    {
+      "date": "2026-03-15",
+      "geographical_area": "Velachery, Chennai",
+      "type_of_issue": "Sanitation/Infrastructure",
+      "number_of_volunteer_need": 15,
+      "what_is_the_issue": "Frequent waterlogging due to clogged and inefficient stormwater drainage, caused by solid waste accumulation, poor maintenance, and irregular cleaning. This leads to stagnant water and associated health risks.",
+      "scale_of_urgency": 10,
+      "type_of_volunteer_need": "Sanitation workers, Cleanup volunteers, Awareness volunteers, Coordination volunteers",
+      "scale_of_effect": 9
+    }
+  ]
+}
