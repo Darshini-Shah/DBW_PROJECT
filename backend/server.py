@@ -20,6 +20,7 @@ from dotenv import load_dotenv
 
 from geocoding import reverse_geocode, get_radius_km_for_urgency
 from pipeline import process_survey_pdf
+from model import enrich_issue
 
 # ── Configuration ───────────────────────────────────────────────────────────────
 
@@ -546,6 +547,17 @@ async def create_issue(
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
 
+    # Enrich the issue with AI-derived fields (req_skillset, estimated_days, max_points)
+    # This is the single Gemini call that adds all missing metadata.
+    try:
+        issue_doc = await enrich_issue(issue_doc)
+        logger.info(
+            f"Issue enriched: skills={issue_doc.get('req_skillset')}, "
+            f"days={issue_doc.get('estimated_days')}, pts={issue_doc.get('max_points')}"
+        )
+    except Exception as e:
+        logger.warning(f"AI enrichment skipped (non-fatal): {e}")
+
     result = issues_collection.insert_one(issue_doc)
     issue_doc["_id"] = str(result.inserted_id)
 
@@ -553,8 +565,7 @@ async def create_issue(
     radius_km = get_radius_km_for_urgency(req.urgency)
     radius_meters = radius_km * 1000
 
-    nearby_volunteers = list(users_collection.find({
-        "role": "volunteer",
+    nearby_volunteers = list(volunteer_collection.find({
         "location": {
             "$nearSphere": {
                 "$geometry": {
@@ -691,24 +702,50 @@ async def accept_issue(issue_id: str, current_user: dict = Depends(get_current_u
 
 @app.get("/api/issues/my-tasks")
 async def get_my_tasks(current_user: dict = Depends(get_current_user)):
-    """Fetch issues assigned to the current volunteer."""
+    """Fetch issues the current volunteer has accepted, via the assignments collection."""
     if current_user.get("role") != "volunteer":
         raise HTTPException(status_code=403, detail="Only volunteers have assigned tasks")
-    
-    issues = list(issues_collection.find({
-        "assigned_volunteers.id": current_user["_id"]
-    }).sort("created_at", -1))
 
-    # Add `is_manager` flag
-    for issue in issues:
-        issue["_id"] = str(issue["_id"])
-        
-        assigned_vols = issue.get("assigned_volunteers", [])
-        if assigned_vols:
-            manager = max(assigned_vols, key=lambda x: x.get("points", 0))
-            issue["is_manager"] = manager["id"] == current_user["_id"]
-        else:
-            issue["is_manager"] = False
+    vol_id = current_user["_id"]  # str
+
+    # Build a query that handles volunteer_id stored as string or ObjectId
+    id_variants = [vol_id]
+    try:
+        id_variants.append(ObjectId(vol_id))
+    except Exception:
+        pass
+
+    accepted = list(
+        assignments_collection.find(
+            {"volunteer_id": {"$in": id_variants}, "status": "accepted"}
+        ).sort("accepted_at", -1)
+    )
+
+    if not accepted:
+        return {"issues": []}
+
+    # Collect issue ObjectIds preserving order
+    issue_oids = []
+    for a in accepted:
+        try:
+            issue_oids.append(ObjectId(a["issue_id"]))
+        except Exception:
+            pass
+
+    if not issue_oids:
+        return {"issues": []}
+
+    issues_raw = list(issues_collection.find({"_id": {"$in": issue_oids}}))
+
+    # Preserve accepted order and attach metadata
+    issue_map = {str(i["_id"]): i for i in issues_raw}
+    issues = []
+    for a in accepted:
+        issue = issue_map.get(a["issue_id"])
+        if issue:
+            issue["_id"] = str(issue["_id"])
+            issue["is_manager"] = False  # simplified; manager logic can be added later
+            issues.append(issue)
 
     return {"issues": issues}
 

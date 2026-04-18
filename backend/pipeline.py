@@ -190,7 +190,7 @@ def upload_surveys_to_db(
     issues_collection = db["issues"]
     counters_collection = db["counters"]
     notifications_collection = db["notifications"]
-    users_collection = db["users"]
+    volunteer_collection = db["volunteer"]
 
     inserted_ids = []
 
@@ -204,17 +204,22 @@ def upload_surveys_to_db(
         )
         surid = f"SUR-{counter['sequence_value']:03d}"
 
-        # Build the issue document
+        # Build the issue document using enriched field names (enrich_issue uses mixed snake_case/space-case)
         issue_doc = {
             "surid": surid,
             "date": survey.get("date", datetime.now(timezone.utc).strftime("%Y-%m-%d")),
-            "geographical area": survey.get("geographical area", ""),
-            "type of issue": survey.get("type of issue", "Other"),
-            "number of volunteer need": survey.get("number of volunteer need", 1),
-            "what is the issue": survey.get("what is the issue", ""),
-            "scale of urgency": survey.get("scale of urgency", 5),
-            "type of volunteer need": survey.get("type of volunteer need", "General Labor"),
-            "scale of effect": survey.get("scale of effect", 5),
+            "geographical area": f"{survey.get('area', '')}, {survey.get('city', '')}".strip(", "),
+            "type of issue": survey.get("type_of_issue") or survey.get("type of issue") or "Other",
+            "number of volunteer need": survey.get("number of volunteer need") or survey.get("num_vol_needed") or 1,
+            "what is the issue": survey.get("what_is_the_issue") or survey.get("what is the issue") or "",
+            "scale of urgency": survey.get("scale of urgency") or 5,
+            "req_skillset": survey.get("req_skillset", []),
+            "num_ppl_affected": survey.get("num_ppl_affected"),
+            "estimated_days": survey.get("estimated_days"),
+            "max_points": survey.get("max_points"),
+            "area": survey.get("area", ""),
+            "city": survey.get("city", ""),
+            "pincode": survey.get("pincode", ""),
             "status": "open",
             "source": "survey_pdf",
             "reported_by": reporter_id,
@@ -222,6 +227,10 @@ def upload_surveys_to_db(
             "assigned_volunteers": [],
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
+
+        # Use location geocoded during enrichment (preferred); fall back to reporter location
+        if survey.get("location", {}).get("coordinates"):
+            issue_doc["location"] = survey["location"]
 
         # Add geo-location if reporter has location
         if reporter_location:
@@ -243,55 +252,57 @@ def upload_surveys_to_db(
                 issue_doc["city"] = ""
                 issue_doc["area"] = ""
 
-            # Notify nearby volunteers based on urgency
-            urgency = survey.get("scale of urgency", 5)
-            if isinstance(urgency, (int, float)):
-                radius_km = get_radius_km_for_urgency(int(urgency))
-                radius_meters = radius_km * 1000
-
-                try:
-                    nearby_volunteers = list(
-                        users_collection.find(
-                            {
-                                "role": "volunteer",
-                                "location": {
-                                    "$nearSphere": {
-                                        "$geometry": reporter_location,
-                                        "$maxDistance": radius_meters,
-                                    }
-                                },
-                            }
-                        )
-                    )
-
-                    notification_docs = []
-                    for vol in nearby_volunteers:
-                        notification_docs.append(
-                            {
-                                "user_id": str(vol["_id"]),
-                                "issue_id": surid,
-                                "surid": surid,
-                                "type": "new_issue",
-                                "title": f"New {issue_doc['type of issue']} issue from survey!",
-                                "message": issue_doc["what is the issue"][:100],
-                                "urgency": urgency,
-                                "area": issue_doc.get("area", ""),
-                                "city": issue_doc.get("city", ""),
-                                "read": False,
-                                "created_at": datetime.now(timezone.utc).isoformat(),
-                            }
-                        )
-
-                    if notification_docs:
-                        notifications_collection.insert_many(notification_docs)
-                        logger.info(
-                            f"Notified {len(notification_docs)} volunteers for {surid}"
-                        )
-                except Exception as e:
-                    logger.warning(f"Could not notify volunteers for {surid}: {e}")
-
+        # Insert the issue FIRST so we get a real MongoDB _id to use in notifications
         result = issues_collection.insert_one(issue_doc)
         inserted_ids.append(surid)
+        real_issue_id_str = str(result.inserted_id)
+
+        # Notify nearby volunteers based on urgency
+        urgency = survey.get("scale of urgency", 5)
+        if isinstance(urgency, (int, float)):
+            radius_km = get_radius_km_for_urgency(int(urgency))
+            radius_meters = radius_km * 1000
+
+            try:
+                nearby_volunteers = list(
+                    volunteer_collection.find(
+                        {
+                            "location": {
+                                "$nearSphere": {
+                                    "$geometry": reporter_location,
+                                    "$maxDistance": radius_meters,
+                                }
+                            },
+                        }
+                    )
+                )
+
+                notification_docs = []
+                for vol in nearby_volunteers:
+                    notification_docs.append(
+                        {
+                            "user_id": str(vol["_id"]),
+                            "issue_id": real_issue_id_str, # Use the actual Mongo _id string!
+                            "surid": surid,
+                            "type": "new_issue",
+                            "title": f"New {issue_doc['type of issue']} issue from survey!",
+                            "message": issue_doc["what is the issue"][:100],
+                            "urgency": urgency,
+                            "area": issue_doc.get("area", ""),
+                            "city": issue_doc.get("city", ""),
+                            "read": False,
+                            "created_at": datetime.now(timezone.utc).isoformat(),
+                        }
+                    )
+
+                if notification_docs:
+                    notifications_collection.insert_many(notification_docs)
+                    logger.info(
+                        f"Notified {len(notification_docs)} volunteers for {surid}"
+                    )
+            except Exception as e:
+                logger.warning(f"Could not notify volunteers for {surid}: {e}")
+
         logger.info(f"Uploaded issue {surid}: {issue_doc['type of issue']}")
 
     client.close()
@@ -365,6 +376,24 @@ async def process_survey_pdf(
         # Step 2: AI Structuring
         logger.info("Pipeline Step 2/3: AI structuring with Gemini...")
         structured_surveys = run_ai_structuring(raw_text)
+
+        # Step 2.5: AI Enrichment — fills req_skillset, urgency, estimated_days, max_points
+        # This runs enrich_issue on each survey (one Gemini call per survey).
+        logger.info("Pipeline Step 2.5/3: Enriching surveys with AI metadata...")
+        from model import enrich_issue
+        enriched_surveys = []
+        for survey in structured_surveys:
+            try:
+                enriched = await enrich_issue(survey)
+                enriched_surveys.append(enriched)
+                logger.info(
+                    f"  Enriched survey: type={enriched.get('type_of_issue')}, "
+                    f"urgency={enriched.get('scale of urgency')}, skills={enriched.get('req_skillset')}"
+                )
+            except Exception as e:
+                logger.warning(f"  Enrichment failed for a survey (using raw): {e}")
+                enriched_surveys.append(survey)
+        structured_surveys = enriched_surveys
 
         # Store structured JSON in GridFS
         json_file_id = fs.put(

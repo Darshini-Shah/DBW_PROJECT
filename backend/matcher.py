@@ -47,6 +47,7 @@ class VolunteerMatcher:
             self.issues_collection      = self.db["issues"]
             self.volunteers_collection  = self.db["volunteer"]
             self.assignments_collection = self.db["assignments"]
+            self.notifications_collection = self.db["notifications"]
             logger.info(f"Connected to database: {db_name}")
         except errors.ConnectionFailure as e:
             logger.error(f"Could not connect to MongoDB: {e}")
@@ -170,15 +171,15 @@ class VolunteerMatcher:
                 f"| needs {num_needed} | {remaining} slot(s) open"
             )
 
-            # Already invited volunteer ids for this issue
+            # Already invited volunteer ids for this issue (normalize to string)
             already_invited = set(
-                self.assignments_collection.distinct("volunteer_id", {"surid": surid})
+                str(vid) for vid in self.assignments_collection.distinct("volunteer_id", {"surid": surid})
             )
 
             qualified = self.find_qualified_volunteers(issue)
 
-            # Only invite volunteers not already invited/accepted
-            new_invites = [v for v in qualified if v["_id"] not in already_invited]
+            # Only invite the exact number of volunteers required (remaining slots)
+            new_invites = [v for v in qualified if str(v["_id"]) not in already_invited][:remaining]
 
             if not new_invites:
                 logger.info(f"  {surid}: No new volunteers to invite.")
@@ -186,27 +187,47 @@ class VolunteerMatcher:
 
             # Create invitation records
             now = datetime.now(timezone.utc).isoformat()
-            invite_docs = [
-                {
+            invite_docs = []
+            notification_docs = []
+
+            for v in new_invites:
+                invite_docs.append({
                     "surid":           surid,
                     "issue_id":        issue_id,
-                    "volunteer_id":    v["_id"],
+                    "volunteer_id":    str(v["_id"]),
                     "volunteer_name":  v.get("fullName", ""),
                     "volunteer_email": v.get("email", ""),
                     "volunteer_phone": v.get("phone", ""),
                     "status":          "invited",   # invited → accepted | declined
                     "invited_at":      now,
                     "accepted_at":     None,
-                }
-                for v in new_invites
-            ]
+                })
 
-            self.assignments_collection.insert_many(invite_docs)
+                # Also create a formal notification for the volunteer
+                notification_docs.append({
+                    "user_id": str(v["_id"]),
+                    "issue_id": issue_id,
+                    "surid": surid,
+                    "type": "new_invite",
+                    "title": f"You were invited to help with {issue.get('type of issue')}",
+                    "message": f"We need your specific skills for an issue reported at {issue.get('geographical area')}.",
+                    "urgency": issue.get("scale of urgency", 5),
+                    "area": issue.get("area", ""),
+                    "city": issue.get("city", ""),
+                    "read": False,
+                    "created_at": now,
+                })
+
+            if invite_docs:
+                self.assignments_collection.insert_many(invite_docs)
+            if notification_docs:
+                self.notifications_collection.insert_many(notification_docs)
+                
             total_invites += len(invite_docs)
 
             logger.info(
-                f"  {surid}: Invited {len(invite_docs)} volunteer(s) "
-                f"(needed: {num_needed}, accepting first {num_needed} who respond)"
+                f"  {surid}: Invited {len(invite_docs)} exactly matched volunteer(s) "
+                f"(remaining needs: {remaining})"
             )
 
         logger.info(f"Matching session complete. Total new invitations sent: {total_invites}")
