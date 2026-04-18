@@ -40,7 +40,7 @@ def get_radius_km_for_urgency(urgency: int) -> float:
 class VolunteerMatcher:
     """Manages the matching of volunteers to community issues."""
 
-    def __init__(self, uri: str, db_name: str = "Dbw_project"):
+    def __init__(self, uri: str, db_name: str = "dbw_project"):
         try:
             self.client = MongoClient(uri)
             self.db = self.client[db_name]

@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 class MongoDBManager:
     """Manages MongoDB operations for the DBW Project."""
 
-    def __init__(self, uri: str, db_name: str = "Dbw_project"):
+    def __init__(self, uri: str, db_name: str = "dbw_project"):
         try:
             self.client = MongoClient(uri)
             self.db = self.client[db_name]

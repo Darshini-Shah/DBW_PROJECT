@@ -176,7 +176,7 @@ const MyTasks = ({ user }) => {
         width={600}
       >
         <Alert 
-          message="Manager mode" 
+          title="Manager mode" 
           description="As the volunteer with the most points on this task, you are the manager. Track daily participation here. Clicking 'Done' will calculate points (Days * 5) for everyone."
           type="info" 
           showIcon 

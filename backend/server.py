@@ -37,10 +37,10 @@ JWT_EXPIRE_HOURS = 24
 # ── Database Setup ──────────────────────────────────────────────────────────────
 
 client = MongoClient(MONGODB_URI)
-db = client["Dbw_project"]
+db = client["dbw_project"]
 users_collection = db["users"]
 volunteer_collection = db["volunteer"]
-field_worker_collection = db["field_worker"]
+field_worker_collection = db["feild_worker"]
 otp_collection = db["otp_registry"]
 issues_collection = db["issues"]
 notifications_collection = db["notifications"]
@@ -182,7 +182,16 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+        "http://localhost:5175",
+        "http://127.0.0.1:5175",
+        "http://localhost:5176",
+        "http://127.0.0.1:5176",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -896,8 +905,7 @@ async def get_nearby_volunteers(
 
     radius_meters = radius_km * 1000
 
-    volunteers = list(users_collection.find({
-        "role": "volunteer",
+    volunteers = list(volunteer_collection.find({
         "location": {
             "$nearSphere": {
                 "$geometry": {

@@ -183,7 +183,7 @@ const RegisterVolunteer = ({ onSuccess }) => {
           styles={{ body: { padding: '32px' } }}
         >
           {error && (
-            <Alert message={error} type="error" showIcon style={{ marginBottom: '16px', borderRadius: '8px' }} />
+            <Alert title={error} type="error" showIcon style={{ marginBottom: '16px', borderRadius: '8px' }} />
           )}
 
           <Form form={form} layout="vertical" name="register_volunteer" onFinish={onFinish}>
@@ -247,7 +247,7 @@ const RegisterVolunteer = ({ onSuccess }) => {
 
             {otpVerified && (
               <Alert 
-                message="Email Verified" 
+                title="Email Verified" 
                 type="success" 
                 showIcon 
                 style={{ marginBottom: '16px', borderRadius: '8px' }} 

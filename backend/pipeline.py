@@ -186,7 +186,7 @@ def upload_surveys_to_db(
 
     MONGODB_URI = os.getenv("MONGODB_URI")
     client = MongoClient(MONGODB_URI)
-    db = client["Dbw_project"]
+    db = client["dbw_project"]
     issues_collection = db["issues"]
     counters_collection = db["counters"]
     notifications_collection = db["notifications"]
@@ -325,7 +325,7 @@ async def process_survey_pdf(
 
     MONGODB_URI = os.getenv("MONGODB_URI")
     client = MongoClient(MONGODB_URI)
-    db = client["Dbw_project"]
+    db = client["dbw_project"]
     fs = gridfs.GridFS(db)
 
     # Step 0: Create a unique filename and save to GridFS
