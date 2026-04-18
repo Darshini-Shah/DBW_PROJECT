@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { List, Card, Typography, Badge, Button, Space, Empty, Spin, message, Tag, Slider, Tooltip } from 'antd';
-import { CheckCircleOutlined, ReloadOutlined, EnvironmentOutlined, ClockCircleOutlined, FilterOutlined } from '@ant-design/icons';
+import { CheckCircleOutlined, ReloadOutlined, EnvironmentOutlined, ClockCircleOutlined, FilterOutlined, TrophyOutlined, CarryOutOutlined } from '@ant-design/icons';
 import { getIssues, acceptIssue } from '../api';
+import { useNavigate } from 'react-router-dom';
 
 const { Title, Text } = Typography;
 
@@ -22,6 +23,7 @@ const Volunteer = ({ user }) => {
   const [loading, setLoading] = useState(true);
   const [accepting, setAccepting] = useState(null);
   const [radiusKm, setRadiusKm] = useState(15);
+  const navigate = useNavigate();
 
   const fetchIssues = useCallback(async () => {
     setLoading(true);
@@ -73,6 +75,20 @@ const Volunteer = ({ user }) => {
           </Text>
         </div>
         <Space>
+          <Button 
+            icon={<TrophyOutlined />} 
+            onClick={() => navigate('/leaderboard')}
+            style={{ borderColor: '#ffd700', color: '#b8860b' }}
+          >
+            Leaderboard
+          </Button>
+          <Button 
+            icon={<CarryOutOutlined />} 
+            onClick={() => navigate('/my-tasks')}
+            type="primary"
+          >
+            My Tasks
+          </Button>
           <Button icon={<ReloadOutlined />} onClick={fetchIssues} loading={loading}>
             Refresh
           </Button>

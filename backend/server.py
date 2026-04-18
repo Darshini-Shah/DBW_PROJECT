@@ -161,6 +161,11 @@ class UserResponse(BaseModel):
     skills: Optional[List[str]] = None
     availability: Optional[List[str]] = None
     hasVehicle: Optional[bool] = False
+    points: Optional[int] = 0
+
+class UpdateDaysRequest(BaseModel):
+    volunteer_id: str
+    days: int
 
 
 # ── FastAPI App ─────────────────────────────────────────────────────────────────
@@ -301,6 +306,7 @@ async def register(req: RegisterRequest):
         "skills": req.skills or [],
         "availability": req.availability or [],
         "hasVehicle": req.hasVehicle,
+        "points": 0,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -398,6 +404,7 @@ async def get_me(current_user: dict = Depends(get_current_user)):
             "skills": current_user.get("skills", []),
             "availability": current_user.get("availability", []),
             "hasVehicle": current_user.get("hasVehicle", False),
+            "points": current_user.get("points", 0),
         }
     }
 
@@ -561,15 +568,33 @@ async def accept_issue(issue_id: str, current_user: dict = Depends(get_current_u
         raise HTTPException(status_code=403, detail="Only volunteers can accept issues")
 
     try:
+        issue = issues_collection.find_one({"_id": ObjectId(issue_id), "status": "open"})
+        if not issue:
+            raise HTTPException(status_code=404, detail="Issue not found or no longer open")
+
+        assigned_count = len(issue.get("assigned_volunteers", []))
+        needed_count = issue.get("number of volunteer need", 1)
+
+        if any(v["id"] == current_user["_id"] for v in issue.get("assigned_volunteers", [])):
+            raise HTTPException(status_code=400, detail="You have already accepted this issue")
+
+        new_status = "open"
+        if assigned_count + 1 >= needed_count:
+            new_status = "assigned"
+
+        current_points = current_user.get("points", 0)
+
         result = issues_collection.update_one(
             {"_id": ObjectId(issue_id), "status": "open"},
             {
-                "$set": {"status": "assigned"},
+                "$set": {"status": new_status},
                 "$addToSet": {
                     "assigned_volunteers": {
                         "id": current_user["_id"],
                         "name": current_user["fullName"],
                         "phone": current_user["phone"],
+                        "points": current_points,
+                        "days_worked": 0,
                         "accepted_at": datetime.now(timezone.utc).isoformat(),
                     }
                 },
@@ -577,14 +602,107 @@ async def accept_issue(issue_id: str, current_user: dict = Depends(get_current_u
         )
 
         if result.modified_count == 0:
-            raise HTTPException(status_code=404, detail="Issue not found or already assigned")
+            raise HTTPException(status_code=404, detail="Failed to accept task. It may be fully assigned.")
 
         logger.info(f"Issue {issue_id} accepted by {current_user['fullName']}")
         return {"message": "Issue accepted successfully"}
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error accepting issue: {e}")
         raise HTTPException(status_code=500, detail="Failed to accept issue")
+
+
+@app.get("/api/issues/my-tasks")
+async def get_my_tasks(current_user: dict = Depends(get_current_user)):
+    """Fetch issues assigned to the current volunteer."""
+    if current_user.get("role") != "volunteer":
+        raise HTTPException(status_code=403, detail="Only volunteers have assigned tasks")
+    
+    issues = list(issues_collection.find({
+        "assigned_volunteers.id": current_user["_id"]
+    }).sort("created_at", -1))
+
+    # Add `is_manager` flag
+    for issue in issues:
+        issue["_id"] = str(issue["_id"])
+        
+        assigned_vols = issue.get("assigned_volunteers", [])
+        if assigned_vols:
+            manager = max(assigned_vols, key=lambda x: x.get("points", 0))
+            issue["is_manager"] = manager["id"] == current_user["_id"]
+        else:
+            issue["is_manager"] = False
+
+    return {"issues": issues}
+
+
+@app.post("/api/issues/{issue_id}/update-days")
+async def update_volunteer_days(issue_id: str, req: UpdateDaysRequest, current_user: dict = Depends(get_current_user)):
+    """Manager adds days to a volunteer for a specific issue."""
+    issue = issues_collection.find_one({"_id": ObjectId(issue_id)})
+    if not issue:
+        raise HTTPException(status_code=404, detail="Issue not found")
+
+    assigned_vols = issue.get("assigned_volunteers", [])
+    if not assigned_vols:
+        raise HTTPException(status_code=400, detail="No volunteers assigned to this issue")
+
+    manager = max(assigned_vols, key=lambda x: x.get("points", 0))
+    if manager["id"] != current_user["_id"]:
+        raise HTTPException(status_code=403, detail="Only the manager can update days")
+
+    if issue.get("status") == "completed":
+        raise HTTPException(status_code=400, detail="Task is already completed")
+
+    # Update the specific volunteer's days_worked in the array
+    result = issues_collection.update_one(
+        {"_id": ObjectId(issue_id), "assigned_volunteers.id": req.volunteer_id},
+        {"$inc": {"assigned_volunteers.$.days_worked": req.days}}
+    )
+
+    if result.modified_count == 0:
+        raise HTTPException(status_code=400, detail="Failed to update days. Volunteer might not be in this issue.")
+
+    return {"message": "Days updated successfully"}
+
+
+@app.post("/api/issues/{issue_id}/complete")
+async def complete_issue(issue_id: str, current_user: dict = Depends(get_current_user)):
+    """Manager marks task as done. Points are awarded."""
+    issue = issues_collection.find_one({"_id": ObjectId(issue_id)})
+    if not issue:
+        raise HTTPException(status_code=404, detail="Issue not found")
+
+    if issue.get("status") == "completed":
+        raise HTTPException(status_code=400, detail="Task is already completed")
+
+    assigned_vols = issue.get("assigned_volunteers", [])
+    if not assigned_vols:
+        raise HTTPException(status_code=400, detail="No volunteers assigned")
+
+    manager = max(assigned_vols, key=lambda x: x.get("points", 0))
+    if manager["id"] != current_user["_id"]:
+        raise HTTPException(status_code=403, detail="Only the manager can complete the task")
+
+    # Update issue status
+    issues_collection.update_one(
+        {"_id": ObjectId(issue_id)},
+        {"$set": {"status": "completed"}}
+    )
+
+    # Award points to volunteers: days_worked * 5
+    for vol in assigned_vols:
+        days = vol.get("days_worked", 0)
+        points_to_add = days * 5
+        if points_to_add > 0:
+            volunteer_collection.update_one(
+                {"_id": ObjectId(vol["id"])},
+                {"$inc": {"points": points_to_add}}
+            )
+
+    return {"message": "Task completed successfully. Points have been distributed."}
 
 
 # ── Notifications Endpoints ─────────────────────────────────────────────────────
@@ -654,6 +772,20 @@ async def get_nearby_volunteers(
         v.pop("password_hash", None)
 
     return {"volunteers": volunteers, "count": len(volunteers)}
+
+
+@app.get("/api/volunteers/leaderboard")
+async def get_leaderboard():
+    """Fetch volunteers sorted by points descending."""
+    volunteers = list(volunteer_collection.find(
+        {"role": "volunteer"}, 
+        {"password_hash": 0}
+    ).sort("points", -1))
+    
+    for v in volunteers:
+        v["_id"] = str(v["_id"])
+        
+    return {"leaderboard": volunteers}
 
 
 # ── Survey Upload (PDF → OCR → AI → DB) ────────────────────────────────────────

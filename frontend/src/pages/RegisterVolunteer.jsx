@@ -52,7 +52,8 @@ const RegisterVolunteer = ({ onSuccess }) => {
 
             setLocationData({ latitude, longitude, area, city, pincode });
             form.setFieldsValue({ 
-              neighborhood: area ? `${area}, ${city} - ${pincode}` : `${city} - ${pincode}`
+              neighborhood: area || city || '',
+              manualPincode: pincode
             });
 
             message.success(`Location detected: ${area || city} (${pincode})`);
@@ -142,6 +143,8 @@ const RegisterVolunteer = ({ onSuccess }) => {
         phone: values.phoneNumber,
         latitude: locationData.latitude,
         longitude: locationData.longitude,
+        pincode: values.manualPincode,
+        area: values.neighborhood,
         skills: values.skills,
         availability: values.availability,
         hasVehicle: values.hasVehicle || false,
@@ -266,8 +269,8 @@ const RegisterVolunteer = ({ onSuccess }) => {
             <Form.Item label="Your Location" required>
               <Row gutter={8}>
                 <Col flex="auto">
-                  <Form.Item name="neighborhood" noStyle rules={[{ required: true, message: 'Please detect your location!' }]}>
-                    <Input size="large" placeholder="Click auto-detect →" readOnly />
+                  <Form.Item name="neighborhood" noStyle rules={[{ required: true, message: 'Please enter your neighborhood or detect location!' }]}>
+                    <Input size="large" placeholder="Neighborhood / Area Name" />
                   </Form.Item>
                 </Col>
                 <Col>
@@ -283,6 +286,11 @@ const RegisterVolunteer = ({ onSuccess }) => {
                   </Button>
                 </Col>
               </Row>
+              <div style={{ marginTop: '16px' }}>
+                <Form.Item name="manualPincode" label="Pincode" rules={[{ required: true, message: 'Pincode is mandatory!' }]}>
+                  <Input size="large" placeholder="6-digit Pincode" maxLength={6} />
+                </Form.Item>
+              </div>
               {locationData && (
                 <div style={{ marginTop: '8px', padding: '8px 12px', background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: '8px', fontSize: '12px', color: '#389e0d' }}>
                   <EnvironmentOutlined /> GPS: {locationData.latitude.toFixed(4)}, {locationData.longitude.toFixed(4)}

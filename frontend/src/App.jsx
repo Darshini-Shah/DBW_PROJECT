@@ -8,6 +8,8 @@ import RegisterFieldWorker from './pages/RegisterFieldWorker';
 import RegisterVolunteer from './pages/RegisterVolunteer';
 import FieldWorker from './pages/FieldWorker';
 import Volunteer from './pages/Volunteer';
+import Leaderboard from './pages/Leaderboard';
+import MyTasks from './pages/MyTasks';
 import { logout, getMe, getNotifications } from './api';
 import './App.css';
 
@@ -163,6 +165,12 @@ function App() {
               } />
               <Route path="/register-volunteer" element={
                 user ? <Navigate to="/" /> : <RegisterVolunteer onSuccess={handleAuthSuccess} />
+              } />
+              <Route path="/leaderboard" element={
+                user ? <Leaderboard /> : <Navigate to="/login" />
+              } />
+              <Route path="/my-tasks" element={
+                user ? <MyTasks user={user} /> : <Navigate to="/login" />
               } />
             </Routes>
           </div>

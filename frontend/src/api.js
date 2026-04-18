@@ -117,4 +117,24 @@ export const getNearbyVolunteers = async (params = {}) => {
   return res.data;
 };
 
+export const getLeaderboard = async () => {
+  const res = await api.get('/api/volunteers/leaderboard');
+  return res.data;
+};
+
+export const getMyTasks = async () => {
+  const res = await api.get('/api/issues/my-tasks');
+  return res.data;
+};
+
+export const updateVolunteerDays = async (issueId, volunteerId, days) => {
+  const res = await api.post(`/api/issues/${issueId}/update-days`, { volunteer_id: volunteerId, days });
+  return res.data;
+};
+
+export const completeTask = async (issueId) => {
+  const res = await api.post(`/api/issues/${issueId}/complete`);
+  return res.data;
+};
+
 export default api;
