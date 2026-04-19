@@ -10,6 +10,7 @@ import FieldWorker from './pages/FieldWorker';
 import Volunteer from './pages/Volunteer';
 import Leaderboard from './pages/Leaderboard';
 import MyTasks from './pages/MyTasks';
+import DemandHeatmap from './pages/DemandHeatmap';
 import { logout, getMe, getNotifications } from './api';
 import './App.css';
 
@@ -171,6 +172,9 @@ function App() {
               } />
               <Route path="/my-tasks" element={
                 user ? <MyTasks user={user} /> : <Navigate to="/login" />
+              } />
+              <Route path="/heatmap" element={
+                user ? <DemandHeatmap /> : <Navigate to="/login" />
               } />
             </Routes>
           </div>

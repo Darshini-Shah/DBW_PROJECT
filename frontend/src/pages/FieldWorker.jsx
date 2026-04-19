@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Card, Button, Typography, Alert, Upload, Progress, List, Tag, Space, Divider } from 'antd';
 import { InboxOutlined, FileTextOutlined, CheckCircleFilled, EnvironmentOutlined, ExclamationCircleFilled } from '@ant-design/icons';
 import { uploadSurveyPDF } from '../api';
+import { useNavigate } from 'react-router-dom';
 
 const { Title, Text } = Typography;
 const { Dragger } = Upload;
@@ -18,6 +19,7 @@ const FieldWorker = ({ user }) => {
   const [progressStatus, setProgressStatus] = useState('');
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
+  const navigate = useNavigate();
 
   const handleUpload = async (file) => {
     setUploading(true);
@@ -72,12 +74,22 @@ const FieldWorker = ({ user }) => {
 
   return (
     <div style={{ maxWidth: '700px', margin: '0 auto' }}>
-      <div style={{ marginBottom: '24px' }}>
-        <Title level={2} style={{ margin: 0 }}>Submit Survey</Title>
-        <Text style={{ color: '#8c8c8c' }}>
-          Upload a PDF survey form from the field. Our AI will extract issues and notify nearby volunteers automatically.
-          {user?.area && <span> • <EnvironmentOutlined /> Reporting from {user.area}, {user.city}</span>}
-        </Text>
+      <div style={{ marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+        <div>
+          <Title level={2} style={{ margin: 0 }}>Submit Survey</Title>
+          <Text style={{ color: '#8c8c8c' }}>
+            Upload a PDF survey form from the field. Our AI will extract issues and notify nearby volunteers automatically.
+            {user?.area && <span> • <EnvironmentOutlined /> Reporting from {user.area}, {user.city}</span>}
+          </Text>
+        </div>
+        <Space>
+          <button 
+            className="bg-red-600 text-white p-3 rounded-lg shadow-hover flex items-center gap-2 font-medium border-none cursor-pointer"
+            onClick={() => navigate('/heatmap')}
+          >
+            <EnvironmentOutlined /> Live Demand Map
+          </button>
+        </Space>
       </div>
 
       {error && (

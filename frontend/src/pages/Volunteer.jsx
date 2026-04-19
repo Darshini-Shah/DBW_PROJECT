@@ -3,6 +3,8 @@ import { List, Card, Typography, Badge, Button, Space, Empty, Spin, message, Tag
 import { CheckCircleOutlined, ReloadOutlined, EnvironmentOutlined, ClockCircleOutlined, FilterOutlined, TrophyOutlined, CarryOutOutlined } from '@ant-design/icons';
 import { getIssues, acceptIssue } from '../api';
 import { useNavigate } from 'react-router-dom';
+import { ToastContainer, toast } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
 
 const { Title, Text } = Typography;
 
@@ -24,6 +26,8 @@ const Volunteer = ({ user }) => {
   const [accepting, setAccepting] = useState(null);
   const [radiusKm, setRadiusKm] = useState(15);
   const navigate = useNavigate();
+  const [knownIssueIds, setKnownIssueIds] = useState(new Set());
+  const initialLoadDone = React.useRef(false);
 
   const fetchIssues = useCallback(async (overridingRadius = null) => {
     setLoading(true);
@@ -36,7 +40,28 @@ const Volunteer = ({ user }) => {
         status_filter: 'open',
       };
       const data = await getIssues(params);
-      setIssues(data.issues || []);
+      const fetchedIssues = data.issues || [];
+      
+      setIssues(fetchedIssues);
+
+      // Check for new issues to trigger toast
+      if (initialLoadDone.current) {
+        fetchedIssues.forEach(issue => {
+          if (!knownIssueIds.has(issue._id)) {
+            const locationName = issue['geographical area'] || issue.city || 'your area';
+            toast.info(`New task available in ${locationName}!`, {
+              position: "top-right",
+              autoClose: 5000,
+            });
+          }
+        });
+      } else {
+        initialLoadDone.current = true;
+      }
+      
+      // Update known IDs
+      setKnownIssueIds(new Set(fetchedIssues.map(i => i._id)));
+      
     } catch (err) {
       console.error('Failed to fetch issues:', err);
       message.error('Failed to load nearby issues');
@@ -47,8 +72,8 @@ const Volunteer = ({ user }) => {
 
   useEffect(() => {
     fetchIssues();
-    // Auto-refresh every 30s
-    const interval = setInterval(() => fetchIssues(), 30000);
+    // Auto-refresh every 60s
+    const interval = setInterval(() => fetchIssues(), 60000);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]); // Only re-fetch if user changes, slider uses onChangeComplete
@@ -69,6 +94,7 @@ const Volunteer = ({ user }) => {
 
   return (
     <div style={{ maxWidth: '800px', margin: '0 auto' }}>
+      <ToastContainer />
       <div style={{ marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
         <div>
           <Title level={2} style={{ margin: 0 }}>Nearby Issues</Title>
@@ -77,6 +103,12 @@ const Volunteer = ({ user }) => {
           </Text>
         </div>
         <Space>
+          <button 
+            className="bg-red-600 text-white p-3 rounded-lg shadow-hover flex items-center gap-2 font-medium border-none cursor-pointer"
+            onClick={() => navigate('/heatmap')}
+          >
+            <EnvironmentOutlined /> Priority Heatmap
+          </button>
           <Button 
             icon={<TrophyOutlined />} 
             onClick={() => navigate('/leaderboard')}

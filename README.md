@@ -36,6 +36,7 @@ pip install -r requirements.txt
 ```
 
 Create a `.env` file in the `backend/` directory:
+
 ```env
 MONGODB_URI=your_mongodb_connection_string
 JWT_SECRET=your_jwt_secret
