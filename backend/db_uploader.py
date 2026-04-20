@@ -15,7 +15,9 @@ logger = logging.getLogger(__name__)
 class MongoDBManager:
     """Manages MongoDB operations for the DBW Project."""
 
-    def __init__(self, uri: str, db_name: str = "dbw_project"):
+    def __init__(self, uri: str, db_name: Optional[str] = None):
+        if db_name is None:
+            db_name = os.getenv("DB_NAME", "dbw_project")
         try:
             self.client = MongoClient(uri)
             self.db = self.client[db_name]
@@ -80,7 +82,8 @@ def load_json_data(file_path: str) -> List[Dict[str, Any]]:
         return []
 
 def main():
-    load_dotenv()
+    # Load environment variables from the root directory
+    load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
     
     mongodb_uri = os.getenv("MONGODB_URI")
     if not mongodb_uri or "your_mongodb_uri_here" in mongodb_uri:

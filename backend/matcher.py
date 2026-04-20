@@ -40,7 +40,9 @@ def get_radius_km_for_urgency(urgency: int) -> float:
 class VolunteerMatcher:
     """Manages the matching of volunteers to community issues."""
 
-    def __init__(self, uri: str, db_name: str = "dbw_project"):
+    def __init__(self, uri: str, db_name: Optional[str] = None):
+        if db_name is None:
+            db_name = os.getenv("DB_NAME", "dbw_project")
         try:
             self.client = MongoClient(uri)
             self.db = self.client[db_name]
@@ -239,7 +241,8 @@ class VolunteerMatcher:
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main():
-    load_dotenv()
+    # Load environment variables from the root directory
+    load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
     mongodb_uri = os.getenv("MONGODB_URI")
 
     if not mongodb_uri:

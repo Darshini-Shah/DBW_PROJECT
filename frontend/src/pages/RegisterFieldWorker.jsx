@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Card, Form, Input, Button, Typography, message, Row, Col, Alert } from 'antd';
+import { Card, Form, Input, Button, Typography, Row, Col, Alert, App as AntApp } from 'antd';
 import { UserAddOutlined, ArrowRightOutlined, CompassOutlined, EnvironmentOutlined } from '@ant-design/icons';
 import { registerUser, sendOTP, verifyOTP } from '../api';
 
 const { Title, Text } = Typography;
 
 const RegisterFieldWorker = ({ onSuccess }) => {
+  const { message } = AntApp.useApp();
   const navigate = useNavigate();
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
@@ -103,13 +104,15 @@ const RegisterFieldWorker = ({ onSuccess }) => {
   };
 
   const onFinish = async (values) => {
-    if (!locationData) {
-      message.error('Please detect your location first!');
+    if (!otpVerified) {
+      message.error('Please verify your email with OTP first!');
       return;
     }
 
-    if (!otpVerified) {
-      message.error('Please verify your email with OTP first!');
+    // Validation: Must have EITHER GPS or enough typed info
+    const hasTypedInfo = values.location && values.pincode;
+    if (!locationData && !hasTypedInfo) {
+      message.error('Please either auto-detect location or type your city and pincode!');
       return;
     }
 
@@ -123,8 +126,11 @@ const RegisterFieldWorker = ({ onSuccess }) => {
         role: 'field_worker',
         fullName: values.fullName,
         phone: values.phone,
-        latitude: locationData.latitude,
-        longitude: locationData.longitude,
+        latitude: locationData?.latitude || null,
+        longitude: locationData?.longitude || null,
+        typedLandmark: values.location,
+        typedDistrict: values.district,
+        typedPincode: values.pincode,
       });
 
       message.success('Field Worker registered successfully!');
@@ -231,10 +237,13 @@ const RegisterFieldWorker = ({ onSuccess }) => {
             </Form.Item>
 
             <Form.Item label="Your Location" required>
+              <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: '8px' }}>
+                Auto-detect GPS or type your primary work area manually.
+              </Text>
               <Row gutter={8}>
                 <Col flex="auto">
-                  <Form.Item name="location" noStyle rules={[{ required: true, message: 'Please detect your location!' }]}>
-                    <Input size="large" placeholder="Click auto-detect →" readOnly />
+                  <Form.Item name="location" noStyle rules={[{ required: true, message: 'Please enter location name!' }]}>
+                    <Input size="large" placeholder="Landmark / Area Name" />
                   </Form.Item>
                 </Col>
                 <Col>
@@ -243,17 +252,29 @@ const RegisterFieldWorker = ({ onSuccess }) => {
                     icon={<CompassOutlined />}
                     onClick={handleAutoDetectLocation}
                     loading={isLocating}
-                    type={locationData ? 'default' : 'primary'}
-                    ghost={!locationData}
+                    type={locationData ? 'primary' : 'default'}
                   >
-                    {locationData ? '✓ Detected' : 'Auto-detect'}
+                    {locationData ? 'GPS Detected' : 'Auto-detect'}
                   </Button>
                 </Col>
               </Row>
+
+              <Row gutter={16} style={{ marginTop: '16px' }}>
+                <Col span={12}>
+                  <Form.Item name="district" label="District" rules={[{ required: true, message: 'Required' }]}>
+                    <Input size="large" placeholder="District" />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item name="pincode" label="Pincode" rules={[{ required: true, message: 'Required' }]}>
+                    <Input size="large" placeholder="Pincode" maxLength={6} />
+                  </Form.Item>
+                </Col>
+              </Row>
+
               {locationData && (
                 <div style={{ marginTop: '8px', padding: '8px 12px', background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: '8px', fontSize: '12px', color: '#389e0d' }}>
-                  <EnvironmentOutlined /> GPS: {locationData.latitude.toFixed(4)}, {locationData.longitude.toFixed(4)}
-                  {locationData.pincode && ` • Pincode: ${locationData.pincode}`}
+                  <EnvironmentOutlined /> Using GPS for precise coordinates.
                 </div>
               )}
             </Form.Item>

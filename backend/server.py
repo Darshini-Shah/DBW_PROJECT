@@ -18,13 +18,14 @@ from pymongo import MongoClient, GEOSPHERE, errors
 from bson import ObjectId
 from dotenv import load_dotenv
 
-from geocoding import reverse_geocode, get_radius_km_for_urgency
+from geocoding import reverse_geocode, get_radius_km_for_urgency, forward_geocode
 from pipeline import process_survey_pdf
 from model import enrich_issue
 
 # ── Configuration ───────────────────────────────────────────────────────────────
 
-load_dotenv()
+# Load environment variables from the root directory
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -37,31 +38,39 @@ JWT_EXPIRE_HOURS = 24
 # ── Database Setup ──────────────────────────────────────────────────────────────
 
 client = MongoClient(MONGODB_URI)
-db = client["dbw_project"]
+# Use environment variable for DB name, defaulting to 'dbw_project'
+# The error "db already exists with different" often occurs due to casing differences (e.g., dbw_project vs DBW_PROJECT)
+DB_NAME = os.getenv("DB_NAME", "dbw_project")
+db = client[DB_NAME]
+
 users_collection = db["users"]
 volunteer_collection = db["volunteer"]
-field_worker_collection = db["feild_worker"]
+field_worker_collection = db["field_worker"]  # Fixed typo: feild_worker -> field_worker
 otp_collection = db["otp_registry"]
 issues_collection = db["issues"]
 notifications_collection = db["notifications"]
 assignments_collection = db["assignments"]   # volunteer invites & acceptances
 
 # Create indexes
-users_collection.create_index("email", unique=True)
-users_collection.create_index([("location", GEOSPHERE)])
-volunteer_collection.create_index("email", unique=True)
-volunteer_collection.create_index([("location", GEOSPHERE)])
-field_worker_collection.create_index("email", unique=True)
-field_worker_collection.create_index([("location", GEOSPHERE)])
-otp_collection.create_index("email", unique=True)
-otp_collection.create_index("expires_at", expireAfterSeconds=0)  # TTL index
-issues_collection.create_index([("location", GEOSPHERE)])
-issues_collection.create_index("pincode")
-issues_collection.create_index("status")
-assignments_collection.create_index([("surid", 1), ("volunteer_id", 1)], unique=True, sparse=True)
-assignments_collection.create_index("volunteer_id")
-
-logger.info("MongoDB connected and indexes ensured.")
+try:
+    users_collection.create_index("email", unique=True)
+    users_collection.create_index([("location", GEOSPHERE)])
+    volunteer_collection.create_index("email", unique=True)
+    volunteer_collection.create_index([("location", GEOSPHERE)])
+    field_worker_collection.create_index("email", unique=True)
+    field_worker_collection.create_index([("location", GEOSPHERE)])
+    otp_collection.create_index("email", unique=True)
+    otp_collection.create_index("expires_at", expireAfterSeconds=0)  # TTL index
+    issues_collection.create_index([("location", GEOSPHERE)])
+    issues_collection.create_index("pincode")
+    issues_collection.create_index("status")
+    assignments_collection.create_index([("surid", 1), ("volunteer_id", 1)], unique=True, sparse=True)
+    assignments_collection.create_index("volunteer_id")
+    logger.info(f"MongoDB connected to '{DB_NAME}' and indexes ensured.")
+except errors.OperationFailure as e:
+    logger.warning(f"Index creation failed (likely already exists with different options): {e}")
+except Exception as e:
+    logger.error(f"Unexpected database error during index creation: {e}")
 
 # ── Auth Utilities ──────────────────────────────────────────────────────────────
 
@@ -121,8 +130,14 @@ class RegisterRequest(BaseModel):
     role: str  # "volunteer" or "field_worker"
     fullName: str
     phone: str
-    latitude: float
-    longitude: float
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    # Manual location override
+    typedLandmark: Optional[str] = None
+    typedCity: Optional[str] = None
+    typedDistrict: Optional[str] = None
+    typedState: Optional[str] = None
+    typedPincode: Optional[str] = None
     # Volunteer-specific (optional)
     skills: Optional[List[str]] = None
     availability: Optional[List[str]] = None
@@ -157,11 +172,11 @@ class UserResponse(BaseModel):
     role: str
     fullName: str
     phone: str
-    pincode: str
-    city: str
-    area: str
-    latitude: float
-    longitude: float
+    pincode: Optional[str] = ""
+    city: Optional[str] = ""
+    area: Optional[str] = ""
+    latitude: Optional[float] = 0.0
+    longitude: Optional[float] = 0.0
     skills: Optional[List[str]] = None
     availability: Optional[List[str]] = None
     hasVehicle: Optional[bool] = False
@@ -182,16 +197,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:5174",
-        "http://127.0.0.1:5174",
-        "http://localhost:5175",
-        "http://127.0.0.1:5175",
-        "http://localhost:5176",
-        "http://127.0.0.1:5176",
-    ],
+    allow_origins=["*"], # Broaden for development to prevent CORS blocks
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -221,7 +227,7 @@ mail_conf = ConnectionConfig(
     MAIL_STARTTLS=True,
     MAIL_SSL_TLS=False,
     USE_CREDENTIALS=True,
-    VALIDATE_CERTS=True
+    VALIDATE_CERTS=False  # Disabled for easier dev setup
 )
 
 fastmail = FastMail(mail_conf)
@@ -266,15 +272,33 @@ async def send_otp(req: OTPRequest):
         # In actual production, you'd await fastmail.send_message(message)
         # For now, we'll log it and skip sending if credentials aren't set
         logger.info(f"OTP for {req.email}: {otp}")
-        if mail_conf.MAIL_USERNAME != "dummy@gmail.com":
+        
+        # Check if we have real credentials (not dummy and not empty)
+        has_real_creds = (
+            mail_conf.MAIL_USERNAME != "dummy@gmail.com" and 
+            mail_conf.MAIL_USERNAME and 
+            mail_conf.MAIL_PASSWORD and 
+            mail_conf.MAIL_PASSWORD != "password"
+        )
+
+        if has_real_creds:
             await fastmail.send_message(message)
             return {"message": "OTP sent successfully"}
         else:
-            return {"message": "OTP generated and logged (Check server logs)", "dev_otp": otp}
+            logger.info("Using DEV MODE for OTP (no real mail credentials found)")
+            return {
+                "message": "OTP generated in DEV MODE (Check server logs)", 
+                "dev_otp": otp,
+                "info": "To send real emails, set MAIL_USERNAME and MAIL_PASSWORD in .env"
+            }
     except Exception as e:
         logger.error(f"Failed to send email: {e}")
-        # Still return success in dev mode if we logged it
-        return {"message": "OTP generated and logged (Check server logs)", "dev_otp": otp}
+        # Return the OTP anyway in the response so the user can continue in dev mode
+        return {
+            "message": "Failed to send email, but OTP is available for dev", 
+            "dev_otp": otp, 
+            "error": str(e)
+        }
 
 @app.post("/auth/verify-otp")
 async def verify_otp(req: OTPVerifyRequest):
@@ -299,8 +323,44 @@ async def register(req: RegisterRequest):
     if target_collection.find_one({"email": req.email}):
         raise HTTPException(status_code=400, detail="Email already registered in this role")
 
-    # Reverse geocode the GPS coordinates
-    geo = await reverse_geocode(req.latitude, req.longitude)
+    # LOCATION LOGIC:
+    # 1. Check if user typed a manual location
+    lat, lng = req.latitude or 0.0, req.longitude or 0.0
+    pincode, city, area, state = "", "", "", ""
+    manual_mode = any([req.typedLandmark, req.typedCity, req.typedDistrict, req.typedState, req.typedPincode])
+    
+    if manual_mode:
+        from geocoding import forward_geocode
+        geo_result = await forward_geocode(
+            req.typedLandmark or "",
+            req.typedCity or "",
+            req.typedDistrict or "",
+            req.typedState or "",
+            req.typedPincode or ""
+        )
+        if geo_result["success"]:
+            lat, lng = geo_result["latitude"], geo_result["longitude"]
+            pincode, city, area, state = geo_result["pincode"], geo_result["city"], geo_result["area"], geo_result["state"]
+            logger.info(f"Volunteer manual location detected: {city}, {state} at [{lng}, {lat}]")
+        else:
+            # If manual geocode fails, check for GPS
+            if req.latitude is not None and req.longitude is not None:
+                logger.warning(f"Manual geocoding failed for {req.email}, falling back to GPS.")
+                geo = await reverse_geocode(req.latitude, req.longitude)
+                pincode, city, area, state = geo["pincode"], geo["city"], geo["area"], geo["state"]
+            else:
+                raise HTTPException(
+                    status_code=400, 
+                    detail="Could not find that location on the map. Please try a more specific address (City, State) or use auto-detect GPS."
+                )
+    else:
+        # 2. Default: Use auto-detected GPS coordinates
+        if req.latitude is None or req.longitude is None:
+            # This should only happen if both manual AND GPS are missing
+            raise HTTPException(status_code=400, detail="Please provide either a typed location or GPS coordinates")
+            
+        geo = await reverse_geocode(req.latitude, req.longitude)
+        pincode, city, area, state = geo["pincode"], geo["city"], geo["area"], geo["state"]
 
     user_doc = {
         "email": req.email,
@@ -310,12 +370,12 @@ async def register(req: RegisterRequest):
         "phone": req.phone,
         "location": {
             "type": "Point",
-            "coordinates": [req.longitude, req.latitude],  # GeoJSON: [lng, lat]
+            "coordinates": [lng, lat],  # GeoJSON: [lng, lat]
         },
-        "pincode": geo["pincode"],
-        "city": geo["city"],
-        "area": geo["area"],
-        "state": geo["state"],
+        "pincode": pincode,
+        "city": city,
+        "area": area, # District/State for volunteers
+        "state": state,
         "skills": req.skills or [],
         "availability": req.availability or [],
         "hasVehicle": req.hasVehicle,
@@ -351,8 +411,8 @@ async def register(req: RegisterRequest):
             "pincode": user_doc["pincode"],
             "city": user_doc["city"],
             "area": user_doc["area"],
-            "latitude": req.latitude,
-            "longitude": req.longitude,
+            "latitude": lat,
+            "longitude": lng,
             "skills": user_doc["skills"],
             "availability": user_doc["availability"],
             "hasVehicle": user_doc["hasVehicle"],
