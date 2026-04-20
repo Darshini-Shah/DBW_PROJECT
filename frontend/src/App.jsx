@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Routes, Route, useNavigate, Navigate } from 'react-router-dom';
-import { Layout, Typography, ConfigProvider, Button, Tag, Space, Badge } from 'antd';
-import { LogoutOutlined, UserOutlined, LoginOutlined, EnvironmentOutlined, BellOutlined } from '@ant-design/icons';
+import { LogoutOutlined, UserOutlined, LoginOutlined, EnvironmentOutlined, BellOutlined, CheckOutlined } from '@ant-design/icons';
+import { Layout, Typography, ConfigProvider, Button, Tag, Space, Badge, Dropdown, List, Empty, Card } from 'antd';
 import LoginPage from './pages/LoginPage';
 import RoleSelection from './pages/RoleSelection';
 import RegisterFieldWorker from './pages/RegisterFieldWorker';
@@ -21,6 +21,7 @@ function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [notificationCount, setNotificationCount] = useState(0);
+  const [notifications, setNotifications] = useState([]);
   const navigate = useNavigate();
 
   // Restore session from JWT on app load
@@ -45,6 +46,7 @@ function App() {
     const fetchNotifications = async () => {
       try {
         const data = await getNotifications();
+        setNotifications(data.notifications || []);
         setNotificationCount(data.count || 0);
       } catch {
         // Silently fail if not authenticated
@@ -59,9 +61,55 @@ function App() {
   const handleLogout = () => {
     logout();
     setUser(null);
+    setNotifications([]);
     setNotificationCount(0);
     navigate('/');
   };
+
+  const handleMarkRead = async () => {
+    try {
+      await import('./api').then(m => m.markNotificationsRead());
+      setNotificationCount(0);
+      setNotifications([]);
+    } catch (err) {
+      console.error("Failed to mark read", err);
+    }
+  };
+
+  const notificationMenu = (
+    <Card 
+      title="Notifications" 
+      extra={<Button type="link" size="small" onClick={handleMarkRead} icon={<CheckOutlined />}>Mark all read</Button>}
+      styles={{ body: { padding: 0 } }}
+      style={{ width: 300, boxShadow: '0 4px 12px rgba(0,0,0,0.15)', borderRadius: '12px' }}
+    >
+      <List
+        dataSource={notifications}
+        locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No new alerts" /> }}
+        renderItem={item => (
+          <List.Item 
+            style={{ padding: '12px 16px', cursor: 'pointer' }} 
+            onClick={() => {
+              if (item.issue_id) navigate('/volunteer'); // or relevant page
+            }}
+          >
+            <List.Item.Meta
+              title={<Text strong style={{ fontSize: '13px' }}>{item.title}</Text>}
+              description={
+                <div style={{ fontSize: '12px' }}>
+                  {item.message}
+                  <div style={{ marginTop: '4px', color: '#bfbfbf', fontSize: '11px' }}>
+                    {item.area}, {item.city}
+                  </div>
+                </div>
+              }
+            />
+          </List.Item>
+        )}
+        style={{ maxHeight: '400px', overflowY: 'auto' }}
+      />
+    </Card>
+  );
 
   const handleAuthSuccess = (userData) => {
     setUser(userData);
@@ -128,9 +176,20 @@ function App() {
               </Tag>
 
               {/* Notification bell */}
-              <Badge count={notificationCount} size="small">
-                <BellOutlined style={{ fontSize: '18px', color: '#595959', cursor: 'pointer' }} />
-              </Badge>
+              <Dropdown dropdownRender={() => notificationMenu} trigger={['click']} placement="bottomRight">
+                <Badge count={notificationCount} size="small">
+                  <BellOutlined style={{ fontSize: '18px', color: '#595959', cursor: 'pointer' }} />
+                </Badge>
+              </Dropdown>
+
+              <Button 
+                type="default" 
+                icon={<EnvironmentOutlined />}
+                onClick={() => navigate('/heatmap')}
+                style={{ fontWeight: 500, borderColor: '#1890ff', color: '#1890ff' }}
+              >
+                Demand Map
+              </Button>
 
               <Tag color="geekblue" icon={<UserOutlined />} style={{ padding: '4px 8px', fontSize: '14px', borderRadius: '4px' }}>
                 {user.role === 'field_worker' ? 'Field Worker' : 'Volunteer'}

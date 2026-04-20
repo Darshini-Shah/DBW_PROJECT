@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { MapContainer, TileLayer, useMap } from 'react-leaflet';
-import L from 'leaflet';
+import * as L from 'leaflet';
 import 'leaflet.heat';
 import { Card, Typography } from 'antd';
 import 'leaflet/dist/leaflet.css';
@@ -18,13 +18,16 @@ const HeatmapLayer = ({ points }) => {
 
     // points is expected to be an array of [lat, lng, intensity]
     const heat = L.heatLayer(points, {
-      radius: 25,
-      blur: 10,
+      radius: 30,
+      blur: 25,
       max: 1.0,
-      maxZoom: 10,
+      minOpacity: 0.5,
       gradient: {
-        0.1: 'red',
-        1.0: 'red'
+        0.1: '#0000ff', // Blue
+        0.3: '#00ffff', // Cyan
+        0.5: '#00ff00', // Green
+        0.7: '#ffff00', // Yellow
+        1.0: '#ff0000'  // Red
       }
     }).addTo(map);
 
@@ -47,8 +50,8 @@ const DemandHeatmap = () => {
           // Response is a list of objects {lat, lng, importance}
           // Map importance (1-100) to intensity (0.0-1.0)
           const data = response.data.map(item => [
-            item.lat, 
-            item.lng, 
+            item.lat,
+            item.lng,
             (item.importance || 50) / 100
           ]);
           setPoints(data);
@@ -83,7 +86,7 @@ const DemandHeatmap = () => {
         <Text style={{ display: 'block', marginBottom: 16, color: '#595959', fontSize: '13px' }}>
           Visualizing demand hotspots based on report importance and density across regions.
         </Text>
-        
+
         {/* Legend */}
         <div style={{ background: '#f5f5f5', padding: '12px', borderRadius: '8px' }}>
           <Text strong style={{ fontSize: 12, display: 'block', marginBottom: 8, textTransform: 'uppercase', color: '#8c8c8c' }}>Legend</Text>

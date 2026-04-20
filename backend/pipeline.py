@@ -85,13 +85,16 @@ def run_ai_structuring(raw_text: str) -> List[Dict[str, Any]]:
     - Identify individual survey reports in the text.
     - Extract the following fields for each survey:
       1. date: The date of the report (use YYYY-MM-DD format if possible).
-      2. geographical area: The location or area mentioned.
-      3. type of issue: Category of the problem (e.g., Food, Water, Medical, Logistics, Sanitation/Infrastructure).
-      4. number of volunteer need: Estimated number of volunteers required (integer).
-      5. what is the issue: A short description of the specific problem.
-      6. scale of urgency: A value from 1 to 10 (10 being most urgent).
-      7. type of volunteer need: Skills or roles required (e.g., Medical Professional, General Labor, Driver).
-      8. scale of effect: A value from 1 to 10 (representing amount of people/area affected).
+      2. geographical area: A human-readable description of the location.
+      3. landmark: A specific building or spot mentioned.
+      4. district: The district or region.
+      5. pincode: The 6-digit PIN code.
+      6. type of issue: Category (Food, Water, Medical, etc.).
+      7. number of volunteer need: Integer.
+      8. what is the issue: Short description.
+      9. scale of urgency: 1-10.
+      10. type of volunteer need: Required skills.
+      11. scale of effect: 1-10.
 
     - If any field is missing, use null.
     - Format the final output as a VALID JSON LIST of objects.
@@ -117,7 +120,7 @@ def run_ai_structuring(raw_text: str) -> List[Dict[str, Any]]:
         raise RuntimeError(f"AI structuring failed: could not parse response as JSON")
 
 
-def upload_surveys_to_db(
+async def upload_surveys_to_db(
     surveys: List[Dict[str, Any]],
     reporter_id: str,
     reporter_name: str,
@@ -138,6 +141,7 @@ def upload_surveys_to_db(
     issues_collection = db["issues"]
     counters_collection = db["counters"]
     notifications_collection = db["notifications"]
+    volunteer_collection = db["volunteer"]
     users_collection = db["users"]
 
     inserted_ids = []
@@ -171,74 +175,91 @@ def upload_surveys_to_db(
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
 
-        # Add geo-location if reporter has location
-        if reporter_location:
+        # Add geo-location logic
+        from geocoding import forward_geocode, reverse_geocode
+        
+        lat, lng = 0.0, 0.0
+        pincode = survey.get("pincode", "")
+        city = ""
+        area = survey.get("geographical area", "")
+        
+        # Try to geocode the extracted address
+        geo_result = await forward_geocode(
+            survey.get("landmark", ""),
+            "", # City
+            survey.get("district", ""),
+            "", # State
+            pincode
+        )
+        
+        if geo_result["success"]:
+            lat, lng = geo_result["latitude"], geo_result["longitude"]
+            pincode = geo_result["pincode"] or pincode
+            city = geo_result["city"]
+            area = geo_result["area"] or area
+            issue_doc["location"] = {"type": "Point", "coordinates": [lng, lat]}
+        elif reporter_location:
+            # Fallback to reporter location
             issue_doc["location"] = reporter_location
             coords = reporter_location.get("coordinates", [0, 0])
-
-            # Try to reverse geocode
+            lng, lat = coords[0], coords[1]
             try:
-                loop = asyncio.new_event_loop()
-                geo = loop.run_until_complete(
-                    reverse_geocode(coords[1], coords[0])
-                )
-                loop.close()
-                issue_doc["pincode"] = geo.get("pincode", "")
-                issue_doc["city"] = geo.get("city", "")
-                issue_doc["area"] = geo.get("area", "")
+                geo = await reverse_geocode(lat, lng)
+                pincode = pincode or geo.get("pincode", "")
+                city = geo.get("city", "")
+                area = area or geo.get("area", "")
             except Exception:
-                issue_doc["pincode"] = ""
-                issue_doc["city"] = ""
-                issue_doc["area"] = ""
+                pass
+        
+        issue_doc["pincode"] = pincode
+        issue_doc["city"] = city
+        issue_doc["area"] = area # Map uses this for display
 
-            # Notify nearby volunteers based on urgency
-            urgency = survey.get("scale of urgency", 5)
-            if isinstance(urgency, (int, float)):
-                radius_km = get_radius_km_for_urgency(int(urgency))
+        # Notify nearby volunteers based on urgency
+        urgency = survey.get("scale of urgency", 5)
+        if isinstance(urgency, (int, float, str)):
+            try:
+                urgency_int = int(urgency)
+                radius_km = get_radius_km_for_urgency(urgency_int)
                 radius_meters = radius_km * 1000
 
-                try:
-                    nearby_volunteers = list(
-                        users_collection.find(
-                            {
-                                "role": "volunteer",
-                                "location": {
-                                    "$nearSphere": {
-                                        "$geometry": reporter_location,
-                                        "$maxDistance": radius_meters,
-                                    }
-                                },
-                            }
-                        )
+                nearby_volunteers = list(
+                    volunteer_collection.find(
+                        {
+                            "location": {
+                                "$nearSphere": {
+                                    "$geometry": issue_doc["location"],
+                                    "$maxDistance": radius_meters,
+                                }
+                            },
+                        }
                     )
+                )
 
-                    notification_docs = []
-                    for vol in nearby_volunteers:
-                        notification_docs.append(
-                            {
-                                "user_id": str(vol["_id"]),
-                                "issue_id": surid,
-                                "surid": surid,
-                                "type": "new_issue",
-                                "title": f"New {issue_doc['type of issue']} issue from survey!",
-                                "message": issue_doc["what is the issue"][:100],
-                                "urgency": urgency,
-                                "area": issue_doc.get("area", ""),
-                                "city": issue_doc.get("city", ""),
-                                "read": False,
-                                "created_at": datetime.now(timezone.utc).isoformat(),
-                            }
-                        )
-
-                    if notification_docs:
-                        notifications_collection.insert_many(notification_docs)
-                        logger.info(
-                            f"Notified {len(notification_docs)} volunteers for {surid}"
-                        )
-                except Exception as e:
-                    logger.warning(f"Could not notify volunteers for {surid}: {e}")
+                notification_docs = []
+                for vol in nearby_volunteers:
+                    notification_docs.append({
+                        "user_id": str(vol["_id"]),
+                        "issue_id": str(issue_id),
+                        "surid": surid,
+                        "type": "new_issue",
+                        "title": f"New {issue_doc['type of issue']} issue near you!",
+                        "message": f"{issue_doc['what is the issue'][:100]}...",
+                        "urgency": urgency_int,
+                        "area": area,
+                        "city": city,
+                        "read": False,
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                    })
+                
+                if notification_docs:
+                    notifications_collection.insert_many(notification_docs)
+                    logger.info(f"Pipeline: Notified {len(notification_docs)} volunteers for {surid}")
+            except Exception as e:
+                logger.error(f"Pipeline: Notification failed for {surid}: {e}")
 
         result = issues_collection.insert_one(issue_doc)
+        issue_id = result.inserted_id
         inserted_ids.append(surid)
         logger.info(f"Uploaded issue {surid}: {issue_doc['type of issue']}")
 
@@ -329,7 +350,7 @@ async def process_survey_pdf(
 
         # Step 3: Upload to MongoDB Issues collection
         logger.info("Pipeline Step 3/3: Uploading to MongoDB Issues collection...")
-        survey_ids = upload_surveys_to_db(
+        survey_ids = await upload_surveys_to_db(
             structured_surveys, reporter_id, reporter_name, reporter_location
         )
         

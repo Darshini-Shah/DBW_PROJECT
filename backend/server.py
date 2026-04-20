@@ -18,7 +18,7 @@ from pymongo import MongoClient, GEOSPHERE, errors
 from bson import ObjectId
 from dotenv import load_dotenv
 
-from geocoding import reverse_geocode, get_radius_km_for_urgency
+from geocoding import reverse_geocode, get_radius_km_for_urgency, forward_geocode
 from pipeline import process_survey_pdf
 
 # ── Configuration ───────────────────────────────────────────────────────────────
@@ -555,6 +555,95 @@ async def get_issues(
         return {"issues": issues, "count": len(issues)}
 
 
+@app.get("/api/heatmap-data")
+async def get_heatmap_data():
+    """Returns coordinates and importance scores for the heat map."""
+    try:
+        heatmap_points = []
+        
+        # 1. Fetch from issues collection
+        issues = list(issues_collection.find({}))
+        for issue in issues:
+            lat, lng = None, None
+            
+            # Try GeoJSON
+            loc = issue.get("location")
+            if loc and isinstance(loc, dict) and loc.get("type") == "Point":
+                coords = loc.get("coordinates")
+                if coords and len(coords) >= 2:
+                    lng, lat = coords[0], coords[1]
+            
+            # Try top-level lat/lng
+            if lat is None or lng is None:
+                lat = issue.get("lat") or issue.get("latitude")
+                lng = issue.get("lng") or issue.get("longitude")
+            
+            # Try nested coordinates
+            if (lat is None or lng is None) and "coordinates" in issue:
+                c = issue["coordinates"]
+                if isinstance(c, (list, tuple)) and len(c) >= 2:
+                    lat, lng = c[0], c[1]
+
+            # Check if we already have coordinates from the logic above
+            if lat is not None and lng is not None:
+                pass 
+            elif issue.get("area") or issue.get("city") or issue.get("pincode"):
+                # On-the-fly geocoding fallback for heatmap
+                try:
+                    area = issue.get("area", "")
+                    city = issue.get("city", "")
+                    pincode = issue.get("pincode", "")
+                    
+                    geo = await forward_geocode(city=city, district=area, pincode=pincode)
+                    if geo["success"]:
+                        lat, lng = geo["latitude"], geo["longitude"]
+                        # Store it back in DB to speed up next time
+                        issues_collection.update_one({"_id": issue["_id"]}, {"$set": {"location": {"type": "Point", "coordinates": [lng, lat]}}})
+                except Exception as e:
+                    logger.warning(f"Heatmap: Fallback geocoding failed for {issue.get('_id')}: {e}")
+
+            if lat is not None and lng is not None:
+                try:
+                    lat, lng = float(lat), float(lng)
+                    if lat == 0 and lng == 0: continue
+                    
+                    urgency = issue.get("scale of urgency") or issue.get("urgency") or 5
+                    effect = issue.get("scale of effect") or 5
+                    importance = issue.get("importance")
+                    
+                    if importance is None:
+                        importance = (int(urgency) * 5) + (int(effect) * 5)
+                    
+                    heatmap_points.append({
+                        "lat": lat,
+                        "lng": lng,
+                        "importance": float(importance)
+                    })
+                except:
+                    continue
+        
+        # 2. Fetch from surveys collection (legacy or uploaded raw data)
+        surveys_collection = db["surveys"]
+        surveys = list(surveys_collection.find({}))
+        for doc in surveys:
+            try:
+                lat = doc.get('lat')
+                lng = doc.get('lng')
+                if lat is not None and lng is not None:
+                    heatmap_points.append({
+                        "lat": float(lat),
+                        "lng": float(lng),
+                        "importance": float(doc.get('importance', 50))
+                    })
+            except (ValueError, TypeError):
+                continue
+        
+        logger.info(f"Heatmap data: {len(heatmap_points)} points sent.")
+        return heatmap_points
+    except Exception as e:
+        logger.error(f"Heatmap data error: {e}")
+        return []
+
 @app.post("/api/issues")
 async def create_issue(
     req: IssueCreateRequest,
@@ -606,8 +695,7 @@ async def create_issue(
     radius_km = get_radius_km_for_urgency(req.urgency)
     radius_meters = radius_km * 1000
 
-    nearby_volunteers = list(users_collection.find({
-        "role": "volunteer",
+    nearby_volunteers = list(volunteer_collection.find({
         "location": {
             "$nearSphere": {
                 "$geometry": {
@@ -872,8 +960,7 @@ async def get_nearby_volunteers(
 
     radius_meters = radius_km * 1000
 
-    volunteers = list(users_collection.find({
-        "role": "volunteer",
+    volunteers = list(volunteer_collection.find({
         "location": {
             "$nearSphere": {
                 "$geometry": {
@@ -973,38 +1060,7 @@ async def upload_survey(
     }
 
 
-@app.get("/api/heatmap-data")
-async def get_heatmap_data():
-    surveys_collection = db["surveys"]
-    documents = list(surveys_collection.find({}, {"_id": 0}))
-    
-    # Also fetch from issues since that's where uploaded surveys go
-    issues = list(db["issues"].find({}, {"_id": 0}))
-    for issue in issues:
-        if "location" in issue and "coordinates" in issue["location"]:
-            issue["lat"] = issue["location"]["coordinates"][1]
-            issue["lng"] = issue["location"]["coordinates"][0]
-        if "scale of urgency" in issue:
-            issue["importance"] = issue["scale of urgency"] * 10
-            
-    all_docs = documents + issues
-    
-    list_of_points = []
-    for doc in all_docs:
-        try:
-            lat = float(doc['lat'])
-            lng = float(doc['lng'])
-            importance = float(doc.get('importance', 50))
-            list_of_points.append({
-                "lat": lat,
-                "lng": lng,
-                "importance": importance
-            })
-        except (KeyError, TypeError, ValueError):
-            continue
-            
-    print(f"DEBUG: Sending to Map -> {list_of_points}")
-    return list_of_points
+# Consolidated heatmap endpoint above
 
 # ── Entry Point ─────────────────────────────────────────────────────────────────
 
