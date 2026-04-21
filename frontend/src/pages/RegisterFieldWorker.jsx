@@ -109,10 +109,8 @@ const RegisterFieldWorker = ({ onSuccess }) => {
       return;
     }
 
-    // Validation: Must have EITHER GPS or enough typed info
-    const hasTypedInfo = values.location && values.pincode;
-    if (!locationData && !hasTypedInfo) {
-      message.error('Please either auto-detect location or type your city and pincode!');
+    if (!locationData) {
+      message.error('GPS Location is mandatory! Please click the auto-detect button.');
       return;
     }
 
@@ -126,11 +124,8 @@ const RegisterFieldWorker = ({ onSuccess }) => {
         role: 'field_worker',
         fullName: values.fullName,
         phone: values.phone,
-        latitude: locationData?.latitude || null,
-        longitude: locationData?.longitude || null,
-        typedLandmark: values.location,
-        typedDistrict: values.district,
-        typedPincode: values.pincode,
+        latitude: locationData.latitude,
+        longitude: locationData.longitude,
       });
 
       message.success('Field Worker registered successfully!');
@@ -237,44 +232,28 @@ const RegisterFieldWorker = ({ onSuccess }) => {
             </Form.Item>
 
             <Form.Item label="Your Location" required>
-              <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: '8px' }}>
-                Auto-detect GPS or type your primary work area manually.
-              </Text>
-              <Row gutter={8}>
-                <Col flex="auto">
-                  <Form.Item name="location" noStyle rules={[{ required: true, message: 'Please enter location name!' }]}>
-                    <Input size="large" placeholder="Landmark / Area Name" />
-                  </Form.Item>
-                </Col>
-                <Col>
-                  <Button
-                    size="large"
-                    icon={<CompassOutlined />}
-                    onClick={handleAutoDetectLocation}
-                    loading={isLocating}
-                    type={locationData ? 'primary' : 'default'}
-                  >
-                    {locationData ? 'GPS Detected' : 'Auto-detect'}
-                  </Button>
-                </Col>
-              </Row>
-
-              <Row gutter={16} style={{ marginTop: '16px' }}>
-                <Col span={12}>
-                  <Form.Item name="district" label="District" rules={[{ required: true, message: 'Required' }]}>
-                    <Input size="large" placeholder="District" />
-                  </Form.Item>
-                </Col>
-                <Col span={12}>
-                  <Form.Item name="pincode" label="Pincode" rules={[{ required: true, message: 'Required' }]}>
-                    <Input size="large" placeholder="Pincode" maxLength={6} />
-                  </Form.Item>
-                </Col>
-              </Row>
+              <Alert 
+                message="GPS Location Required" 
+                description="Field workers must be registered at their primary area of operation via GPS."
+                type="info" 
+                showIcon 
+                style={{ marginBottom: '16px', borderRadius: '8px' }}
+              />
+              <Button
+                size="large"
+                icon={<CompassOutlined />}
+                onClick={handleAutoDetectLocation}
+                loading={isLocating}
+                type={locationData ? 'primary' : 'default'}
+                block
+                style={{ height: '50px', fontSize: '16px', fontWeight: 600 }}
+              >
+                {locationData ? '✓ Location Detected' : 'Click to Auto-detect GPS Location'}
+              </Button>
 
               {locationData && (
-                <div style={{ marginTop: '8px', padding: '8px 12px', background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: '8px', fontSize: '12px', color: '#389e0d' }}>
-                  <EnvironmentOutlined /> Using GPS for precise coordinates.
+                <div style={{ marginTop: '12px', padding: '12px', background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: '8px', fontSize: '13px', color: '#389e0d' }}>
+                  <EnvironmentOutlined /> <strong>GPS Active:</strong> {locationData.area ? `${locationData.area}, ` : ''}{locationData.city} ({locationData.pincode})
                 </div>
               )}
             </Form.Item>

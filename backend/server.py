@@ -130,14 +130,8 @@ class RegisterRequest(BaseModel):
     role: str  # "volunteer" or "field_worker"
     fullName: str
     phone: str
-    latitude: Optional[float] = None
-    longitude: Optional[float] = None
-    # Manual location override
-    typedLandmark: Optional[str] = None
-    typedCity: Optional[str] = None
-    typedDistrict: Optional[str] = None
-    typedState: Optional[str] = None
-    typedPincode: Optional[str] = None
+    latitude: float
+    longitude: float
     # Volunteer-specific (optional)
     skills: Optional[List[str]] = None
     availability: Optional[List[str]] = None
@@ -378,44 +372,17 @@ async def register(req: RegisterRequest):
     if target_collection.find_one({"email": req.email}):
         raise HTTPException(status_code=400, detail="Email already registered in this role")
 
-    # LOCATION LOGIC:
-    # 1. Check if user typed a manual location
-    lat, lng = req.latitude or 0.0, req.longitude or 0.0
-    pincode, city, area, state = "", "", "", ""
-    manual_mode = any([req.typedLandmark, req.typedCity, req.typedDistrict, req.typedState, req.typedPincode])
+    # LOCATION LOGIC: Mandatory auto-detect GPS coordinates
+    lat, lng = req.latitude, req.longitude
     
-    if manual_mode:
-        from geocoding import forward_geocode
-        geo_result = await forward_geocode(
-            req.typedLandmark or "",
-            req.typedCity or "",
-            req.typedDistrict or "",
-            req.typedState or "",
-            req.typedPincode or ""
-        )
-        if geo_result["success"]:
-            lat, lng = geo_result["latitude"], geo_result["longitude"]
-            pincode, city, area, state = geo_result["pincode"], geo_result["city"], geo_result["area"], geo_result["state"]
-            logger.info(f"Volunteer manual location detected: {city}, {state} at [{lng}, {lat}]")
-        else:
-            # If manual geocode fails, check for GPS
-            if req.latitude is not None and req.longitude is not None:
-                logger.warning(f"Manual geocoding failed for {req.email}, falling back to GPS.")
-                geo = await reverse_geocode(req.latitude, req.longitude)
-                pincode, city, area, state = geo["pincode"], geo["city"], geo["area"], geo["state"]
-            else:
-                raise HTTPException(
-                    status_code=400, 
-                    detail="Could not find that location on the map. Please try a more specific address (City, State) or use auto-detect GPS."
-                )
-    else:
-        # 2. Default: Use auto-detected GPS coordinates
-        if req.latitude is None or req.longitude is None:
-            # This should only happen if both manual AND GPS are missing
-            raise HTTPException(status_code=400, detail="Please provide either a typed location or GPS coordinates")
-            
-        geo = await reverse_geocode(req.latitude, req.longitude)
+    # Use reverse geocoding to fill in details like pincode, city, etc.
+    try:
+        geo = await reverse_geocode(lat, lng)
         pincode, city, area, state = geo["pincode"], geo["city"], geo["area"], geo["state"]
+    except Exception as e:
+        logger.warning(f"Reverse geocode failed for {req.email}: {e}")
+        # Default fallbacks if reverse geocoding fails but we have GPS
+        pincode, city, area, state = "000000", "Unknown", "Unknown", "Unknown"
 
     user_doc = {
         "email": req.email,
