@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Routes, Route, useNavigate, Navigate } from 'react-router-dom';
 import { LogoutOutlined, UserOutlined, LoginOutlined, EnvironmentOutlined, BellOutlined, CheckOutlined } from '@ant-design/icons';
-import { Layout, Typography, ConfigProvider, Button, Tag, Space, Badge, Dropdown, List, Empty, Card } from 'antd';
+import { Layout, Typography, ConfigProvider, Button, Tag, Space, Badge, Dropdown, List, Empty, Card, Popover } from 'antd';
 import LoginPage from './pages/LoginPage';
 import RoleSelection from './pages/RoleSelection';
 import RegisterFieldWorker from './pages/RegisterFieldWorker';
@@ -189,9 +189,41 @@ function App() {
                 <EnvironmentOutlined /> Demand Map
               </button>
 
-              <Tag color="geekblue" icon={<UserOutlined />} style={{ padding: '4px 8px', fontSize: '14px', borderRadius: '4px' }}>
-                {user.role === 'field_worker' ? 'Field Worker' : 'Volunteer'}
-              </Tag>
+              <Popover 
+                content={
+                  <div style={{ padding: '4px', minWidth: '220px' }}>
+                    <Text strong style={{ display: 'block', fontSize: '16px', marginBottom: '2px', color: '#262626' }}>{user.fullName || 'User'}</Text>
+                    <Text type="secondary" style={{ display: 'block', marginBottom: '16px', fontSize: '13px' }}>{user.email}</Text>
+                    
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                      <div>
+                        <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: '2px' }}>Role</Text>
+                        <Text style={{ fontWeight: 500, color: '#1f1f1f' }}>{user.role === 'field_worker' ? 'Field Worker' : 'Volunteer'}</Text>
+                      </div>
+                      <div>
+                        <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: '2px' }}>Location</Text>
+                        <Text style={{ fontWeight: 500, color: '#1f1f1f' }}>
+                          <EnvironmentOutlined style={{ marginRight: '4px', color: '#1890ff' }} />
+                          {user.area ? `${user.area}, ${user.city}` : user.city || 'Unknown'}
+                        </Text>
+                      </div>
+                      {user.phone && (
+                        <div>
+                          <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: '2px' }}>Phone</Text>
+                          <Text style={{ fontWeight: 500, color: '#1f1f1f' }}>{user.phone}</Text>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                } 
+                trigger="click" 
+                placement="bottomRight"
+              >
+                <Tag color="geekblue" icon={<UserOutlined />} style={{ padding: '4px 8px', fontSize: '14px', borderRadius: '4px', cursor: 'pointer' }}>
+                  {user.role === 'field_worker' ? 'Field Worker' : 'Volunteer'}
+                </Tag>
+              </Popover>
+
               <Button 
                 type="default" 
                 icon={<LogoutOutlined />}

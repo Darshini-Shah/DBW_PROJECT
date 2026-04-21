@@ -96,28 +96,22 @@ const Volunteer = ({ user }) => {
   return (
     <div style={{ maxWidth: '800px', margin: '0 auto' }}>
       <ToastContainer />
-      <div style={{ marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+      <div style={{ marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'nowrap', gap: '12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px', minWidth: 0 }}>
           <Button 
             icon={<ArrowLeftOutlined />} 
             onClick={() => navigate(-1)} 
             shape="circle" 
-            style={{ border: 'none', background: '#f0f0f0' }}
+            style={{ border: 'none', background: '#f0f0f0', flexShrink: 0 }}
           />
-          <div>
-            <Title level={2} style={{ margin: 0 }}>Nearby Issues</Title>
-            <Text style={{ color: '#8c8c8c' }}>
+          <div style={{ minWidth: 0 }}>
+            <Title level={2} style={{ margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Nearby Issues</Title>
+            <Text style={{ color: '#8c8c8c', display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
               <EnvironmentOutlined /> Showing tasks within {radiusKm}km of {user?.area || user?.city || 'your location'}
             </Text>
           </div>
         </div>
-        <Space>
-          <button 
-            className="premium-heatmap-btn"
-            onClick={() => navigate('/heatmap')}
-          >
-            <EnvironmentOutlined /> Priority Heatmap
-          </button>
+        <Space style={{ flexShrink: 0 }}>
           <Button 
             icon={<TrophyOutlined />} 
             onClick={() => navigate('/leaderboard')}
