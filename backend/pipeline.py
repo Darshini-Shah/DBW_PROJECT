@@ -30,113 +30,69 @@ STRUCTURED_OUTPUT_DIR = os.path.join(BACKEND_DIR, "data", "structured_output")
 os.makedirs(TEMP_IMAGE_DIR, exist_ok=True)
 
 
-# ── ORIGINAL OCR PATH (COMMENTED OUT TO SAVE RAM) ───────────────────────────
+# ── OPTION A: ORIGINAL OCR PATH (ACTIVE) ────────────────────────────────────
 #
-# def run_ocr_on_pdf(pdf_path: str) -> str:
-#     """
-#     Step 1: Run OCR on a single PDF file using the existing preprocessing logic.
-#     Returns the extracted raw text.
-#     """
-#     import fitz  # PyMuPDF
-#     import easyocr
-#     import numpy as np
-#
-#     reader = easyocr.Reader(["en"], gpu=False)
-#
-#     logger.info(f"OCR: Processing {os.path.basename(pdf_path)}...")
-#
-#     try:
-#         doc = fitz.open(pdf_path)
-#     except Exception as e:
-#         logger.error(f"OCR: Failed to open PDF: {e}")
-#         raise RuntimeError(f"PDF open failed: {e}")
-#
-#     full_text = f"\n\nSOURCE_FILE: {os.path.basename(pdf_path)}\n"
-#
-#     for i in range(len(doc)):
-#         page = doc[i]
-#         pix = page.get_pixmap(dpi=300)
-#         img_array = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.h, pix.w, pix.n)
-#         
-#         if pix.n == 4:
-#             img_array = img_array[:, :, :3]
-#             
-#         results = reader.readtext(img_array, detail=0)
-#         text = " ".join(results)
-#         full_text += f"\n--- Page {i + 1} ---\n{text}"
-#         logger.info(f"OCR: Finished page {i + 1}")
-#
-#     doc.close()
-#     return full_text
-#
-#
-# def run_ai_structuring(raw_text: str) -> List[Dict[str, Any]]:
-#     """
-#     Step 2: Send raw OCR text to Gemini to extract structured survey data.
-#     """
-#     import google.generativeai as genai
-#
-#     genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-#     model = genai.GenerativeModel("gemini-1.5-flash")
-#
-#     prompt = f"..." # (Prompt truncated for brevity in comments)
-#     response = model.generate_content(prompt)
-#     # ... (rest of logic)
-#     return []
-
-
-# ── NEW LIGHTWEIGHT VISION PATH (ACTIVE) ──────────────────────────────────────
-
-def convert_pdf_to_images(pdf_path: str) -> List[Any]:
+def run_ocr_on_pdf(pdf_path: str) -> str:
     """
-    Converts PDF pages to a list of images for Gemini Vision.
-    Uses PyMuPDF (fitz) which is lightweight.
+    Step 1: Run OCR on a single PDF file using the existing preprocessing logic.
+    Returns the extracted raw text.
     """
-    import fitz
-    from PIL import Image
-    import io
+    import fitz  # PyMuPDF
+    import easyocr
+    import numpy as np
 
-    images = []
+    reader = easyocr.Reader(["en"], gpu=False)
+
+    logger.info(f"OCR: Processing {os.path.basename(pdf_path)}...")
+
     try:
         doc = fitz.open(pdf_path)
-        for i in range(len(doc)):
-            page = doc[i]
-            pix = page.get_pixmap(dpi=200) # 200 DPI is enough for AI
-            img_data = pix.tobytes("png")
-            images.append(Image.open(io.BytesIO(img_data)))
-        doc.close()
     except Exception as e:
-        logger.error(f"PDF Conversion failed: {e}")
-        raise RuntimeError(f"Could not convert PDF to images: {e}")
-    
-    return images
+        logger.error(f"OCR: Failed to open PDF: {e}")
+        raise RuntimeError(f"PDF open failed: {e}")
 
+    full_text = f"\n\nSOURCE_FILE: {os.path.basename(pdf_path)}\n"
 
-async def run_multimodal_extraction(images: List[Any]) -> List[Dict[str, Any]]:
+    for i in range(len(doc)):
+        page = doc[i]
+        pix = page.get_pixmap(dpi=300)
+        img_array = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.h, pix.w, pix.n)
+        
+        if pix.n == 4:
+            img_array = img_array[:, :, :3]
+            
+        results = reader.readtext(img_array, detail=0)
+        text = " ".join(results)
+        full_text += f"\n--- Page {i + 1} ---\n{text}"
+        logger.info(f"OCR: Finished page {i + 1}")
+
+    doc.close()
+    return full_text
+#
+#
+def run_ai_structuring(raw_text: str) -> List[Dict[str, Any]]:
     """
-    Sends images directly to Gemini to extract structured data.
-    This replaces BOTH the local OCR (EasyOCR) and the separate structuring step.
+    Step 2: Send raw OCR text to Gemini to extract structured survey data.
+    Uses the specialized extraction prompt for hand-filled forms.
     """
     import google.generativeai as genai
-    import PIL.Image
+    import json
 
     genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-    # Use gemini-1.5-flash which is multimodal and very fast
     model = genai.GenerativeModel("gemini-2.5-flash")
 
-    prompt = """
+    prompt = f"""
 You are a data extraction specialist for an NGO disaster-relief platform.
-Below are images of hand-filled community survey forms.
+Below is raw text extracted via OCR from hand-filled community survey forms.
 
 YOUR TASK:
-Identify each individual survey report in the images and extract the fields below into a JSON array.
+Identify each individual survey report in the text and extract the fields below into a JSON array.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 FIELDS TO EXTRACT (for each survey):
 1. type_of_issue (Food | Water | Medical | Logistics | Sanitation/Infrastructure | Education | Other)
-2. what_is_the_issue (Concise description)
+2. what_is_the_issue (Concise 1-2 sentence description)
 3. date (YYYY-MM-DD or null)
-4. landmark (Specific building, school, or landmark like "Govt. Girls Ashram School")
+4. landmark (Specific location mentioned)
 5. city (Town or City name)
 6. district (District name)
 7. state (State name)
@@ -146,26 +102,108 @@ FIELDS TO EXTRACT (for each survey):
 
 STRICT RULES:
 - Output ONLY a valid JSON array.
-- "area" is not needed in the JSON; use "district" and "state" instead.
 - If text is hard to read, make your best guess or use null.
+- Do not fabricate data not present or implied in the text.
+
+RAW TEXT:
+{raw_text}
 """
 
-    logger.info(f"AI: Processing {len(images)} page(s) with Gemini Vision...")
-    
-    # Combine prompt with images
-    content = [prompt] + images
-    
+    logger.info("AI: Structuring raw OCR text with Gemini...")
     try:
-        response = model.generate_content(content)
+        response = model.generate_content(prompt)
         raw_json = response.text.replace("```json", "").replace("```", "").strip()
         data = json.loads(raw_json)
         if isinstance(data, dict):
             data = [data]
-        logger.info(f"AI: Successfully extracted {len(data)} survey(s) using Vision")
+        logger.info(f"AI: Successfully structured {len(data)} survey(s)")
         return data
     except Exception as e:
-        logger.error(f"AI Multimodal extraction failed: {e}")
-        raise RuntimeError(f"Vision extraction failed: {e}")
+        logger.error(f"AI structuring failed: {e}")
+        return []
+
+
+# ── OPTION B: NEW LIGHTWEIGHT VISION PATH (COMMENTED OUT) ────────────────────
+
+# def convert_pdf_to_images(pdf_path: str) -> List[Any]:
+#     """
+#     Converts PDF pages to a list of images for Gemini Vision.
+#     Uses PyMuPDF (fitz) which is lightweight.
+#     """
+#     import fitz
+#     from PIL import Image
+#     import io
+
+#     images = []
+#     try:
+#         doc = fitz.open(pdf_path)
+#         for i in range(len(doc)):
+#             page = doc[i]
+#             pix = page.get_pixmap(dpi=200) # 200 DPI is enough for AI
+#             img_data = pix.tobytes("png")
+#             images.append(Image.open(io.BytesIO(img_data)))
+#         doc.close()
+#     except Exception as e:
+#         logger.error(f"PDF Conversion failed: {e}")
+#         raise RuntimeError(f"Could not convert PDF to images: {e}")
+    
+#     return images
+
+
+# async def run_multimodal_extraction(images: List[Any]) -> List[Dict[str, Any]]:
+#     """
+#     Sends images directly to Gemini to extract structured data.
+#     This replaces BOTH the local OCR (EasyOCR) and the separate structuring step.
+#     """
+#     import google.generativeai as genai
+#     import PIL.Image
+
+#     genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+#     # Use gemini-1.5-flash which is multimodal and very fast
+#     model = genai.GenerativeModel("gemini-2.5-flash")
+
+#     prompt = """
+# You are a data extraction specialist for an NGO disaster-relief platform.
+# Below are images of hand-filled community survey forms.
+
+# YOUR TASK:
+# Identify each individual survey report in the images and extract the fields below into a JSON array.
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# FIELDS TO EXTRACT (for each survey):
+# 1. type_of_issue (Food | Water | Medical | Logistics | Sanitation/Infrastructure | Education | Other)
+# 2. what_is_the_issue (Concise description)
+# 3. date (YYYY-MM-DD or null)
+# 4. landmark (Specific building, school, or landmark like "Govt. Girls Ashram School")
+# 5. city (Town or City name)
+# 6. district (District name)
+# 7. state (State name)
+# 8. pincode (6-digit PIN code)
+# 9. num_ppl_affected (Integer or null)
+# 10. num_vol_needed (Integer or null)
+
+# STRICT RULES:
+# - Output ONLY a valid JSON array.
+# - "area" is not needed in the JSON; use "district" and "state" instead.
+# - If text is hard to read, make your best guess or use null.
+# """
+
+#     logger.info(f"AI: Processing {len(images)} page(s) with Gemini Vision...")
+    
+#     # Combine prompt with images
+#     content = [prompt] + images
+    
+#     try:
+#         # response = model.generate_content(content)
+#         # raw_json = response.text.replace("```json", "").replace("```", "").strip()
+#         # data = json.loads(raw_json)
+#         # if isinstance(data, dict):
+#         #     data = [data]
+#         logger.info(f"AI: Successfully extracted survey(s) using Vision")
+#         return []
+#     except Exception as e:
+#         logger.error(f"AI Multimodal extraction failed: {e}")
+#         raise RuntimeError(f"Vision extraction failed: {e}")
 
 
 async def upload_surveys_to_db(
@@ -310,7 +348,6 @@ async def upload_surveys_to_db(
                             "created_at": datetime.now(timezone.utc).isoformat(),
                         }
                     )
-                )
 
                 if notification_docs:
                     notifications_collection.insert_many(notification_docs)
@@ -371,19 +408,19 @@ async def process_survey_pdf(
         f.write(pdf_bytes)
 
     try:
-        # ── OPTION A: NEW VISION PATH (Lightweight, Recommended) ──────────────
-        logger.info("Pipeline: Using Gemini Vision for extraction...")
-        page_images = convert_pdf_to_images(temp_pdf_path)
-        structured_surveys = await run_multimodal_extraction(page_images)
-        text_file_id = fs.put(b"Extracted via Vision", filename=f"vision_{unique_name}.txt")
+        # ── OPTION A: ORIGINAL OCR PATH (EasyOCR - Active) ────────────────────
+        logger.info("Pipeline Step 1/3: Running OCR...")
+        raw_text = run_ocr_on_pdf(temp_pdf_path)
+        if not raw_text.strip(): raise RuntimeError("OCR produced no text")
+        text_file_id = fs.put(raw_text.encode("utf-8"), filename=f"raw_{unique_name}.txt")
+        logger.info("Pipeline Step 2/3: AI structuring...")
+        structured_surveys = run_ai_structuring(raw_text)
 
-        # ── OPTION B: ORIGINAL OCR PATH (Commented out to save RAM) ───────────
-        # logger.info("Pipeline Step 1/3: Running OCR...")
-        # raw_text = run_ocr_on_pdf(temp_pdf_path)
-        # if not raw_text.strip(): raise RuntimeError("OCR produced no text")
-        # text_file_id = fs.put(raw_text.encode("utf-8"), filename=f"raw_{unique_name}.txt")
-        # logger.info("Pipeline Step 2/3: AI structuring...")
-        # structured_surveys = run_ai_structuring(raw_text)
+        # ── OPTION B: NEW VISION PATH (Commented Out) ─────────────────────────
+        # logger.info("Pipeline: Using Gemini Vision for extraction...")
+        # page_images = convert_pdf_to_images(temp_pdf_path)
+        # structured_surveys = await run_multimodal_extraction(page_images)
+        # text_file_id = fs.put(b"Extracted via Vision", filename=f"vision_{unique_name}.txt")
         # ──────────────────────────────────────────────────────────────────────
 
         # Step 2.5: AI Enrichment — fills req_skillset, urgency, estimated_days, max_points
