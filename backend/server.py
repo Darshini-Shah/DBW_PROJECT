@@ -121,6 +121,12 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
     user.pop("password_hash", None)
     return user
 
+def serialize_mongo_doc(doc):
+    if isinstance(doc, dict):
+        return {k: str(v) if isinstance(v, ObjectId) else serialize_mongo_doc(v) for k, v in doc.items()}
+    elif isinstance(doc, list):
+        return [serialize_mongo_doc(item) for item in doc]
+    return doc
 
 # ── Pydantic Models ─────────────────────────────────────────────────────────────
 
@@ -577,22 +583,19 @@ async def get_issues(
                 # Volunteer sees it if it matches skills OR location (as fallback, or both)
                 # Following matcher.py's spirit: Location match is often enough, but Skills prioritize.
                 if skill_match or area_match:
-                    issue["_id"] = str(issue["_id"])
-                    filtered_issues.append(issue)
+                    filtered_issues.append(serialize_mongo_doc(issue))
             
             return {"issues": filtered_issues, "count": len(filtered_issues)}
 
-        for issue in issues:
-            issue["_id"] = str(issue["_id"])
-        return {"issues": issues, "count": len(issues)}
+        serialized_issues = [serialize_mongo_doc(i) for i in issues]
+        return {"issues": serialized_issues, "count": len(serialized_issues)}
     except Exception as e:
         logger.error(f"Error fetching issues: {e}")
         # Fallback: return without geo filter
         fallback_query = {"status": status_filter} if status_filter else {}
         issues = list(issues_collection.find(fallback_query).limit(50))
-        for issue in issues:
-            issue["_id"] = str(issue["_id"])
-        return {"issues": issues, "count": len(issues)}
+        serialized_issues = [serialize_mongo_doc(i) for i in issues]
+        return {"issues": serialized_issues, "count": len(serialized_issues)}
 
 
 @app.get("/api/heatmap-data")

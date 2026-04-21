@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { List, Card, Typography, Badge, Button, Space, Empty, Spin, message, Tag, Slider, Tooltip } from 'antd';
+import { List, Card, Typography, Badge, Button, Space, Empty, Spin, Tag, Slider, Tooltip, App as AntdApp } from 'antd';
 import { ArrowLeftOutlined, CheckCircleOutlined, ReloadOutlined, EnvironmentOutlined, ClockCircleOutlined, FilterOutlined, TrophyOutlined, CarryOutOutlined } from '@ant-design/icons';
 import { getIssues, acceptIssue } from '../api';
 import { useNavigate } from 'react-router-dom';
@@ -21,6 +21,7 @@ const urgencyLabels = {
 };
 
 const Volunteer = ({ user }) => {
+  const { message } = AntdApp.useApp();
   const [issues, setIssues] = useState([]);
   const [loading, setLoading] = useState(true);
   const [accepting, setAccepting] = useState(null);
