@@ -138,6 +138,11 @@ class RegisterRequest(BaseModel):
     phone: str
     latitude: float
     longitude: float
+    pincode: Optional[str] = None
+    city: Optional[str] = None
+    area: Optional[str] = None
+    state: Optional[str] = None
+    street: Optional[str] = None
     # Volunteer-specific (optional)
     skills: Optional[List[str]] = None
     availability: Optional[List[str]] = None
@@ -399,14 +404,19 @@ async def register(req: RegisterRequest):
     # LOCATION LOGIC: Mandatory auto-detect GPS coordinates
     lat, lng = req.latitude, req.longitude
     
-    # Use reverse geocoding to fill in details like pincode, city, etc.
-    try:
-        geo = await reverse_geocode(lat, lng)
-        pincode, city, area, state = geo["pincode"], geo["city"], geo["area"], geo["state"]
-    except Exception as e:
-        logger.warning(f"Reverse geocode failed for {req.email}: {e}")
-        # Default fallbacks if reverse geocoding fails but we have GPS
-        pincode, city, area, state = "000000", "Unknown", "Unknown", "Unknown"
+    # Use provided address fields or fallback to reverse geocoding
+    pincode, city, area, state, street = req.pincode, req.city, req.area, req.state, req.street
+    
+    if not pincode or not city:
+        try:
+            geo = await reverse_geocode(lat, lng)
+            pincode = pincode or geo.get("pincode", "")
+            city = city or geo.get("city", "")
+            area = area or geo.get("area", "")
+            state = state or geo.get("state", "")
+        except Exception as e:
+            logger.warning(f"Reverse geocode failed for {req.email}: {e}")
+            pincode, city, area, state = pincode or "000000", city or "Unknown", area or "Unknown", state or "Unknown"
 
     user_doc = {
         "email": req.email,
@@ -422,6 +432,7 @@ async def register(req: RegisterRequest):
         "city": city,
         "area": area, # District/State for volunteers
         "state": state,
+        "street": street,
         "skills": req.skills or [],
         "availability": req.availability or [],
         "hasVehicle": req.hasVehicle,

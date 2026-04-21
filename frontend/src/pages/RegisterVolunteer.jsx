@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Card, Form, Input, Select, Button, Typography, Row, Col, Checkbox, Space, Alert, Spin, App as AntApp } from 'antd';
 import { HeartOutlined, ArrowRightOutlined, CompassOutlined, EnvironmentOutlined, ArrowLeftOutlined } from '@ant-design/icons';
 import { registerUser, sendOTP, verifyOTP } from '../api';
+import LocationPickerMap from '../components/LocationPickerMap';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
@@ -31,52 +32,15 @@ const RegisterVolunteer = ({ onSuccess }) => {
   const [error, setError] = useState(null);
   const [locationData, setLocationData] = useState(null);
 
-  const handleAutoDetectLocation = () => {
-    setIsLocating(true);
-    if ('geolocation' in navigator) {
-      navigator.geolocation.getCurrentPosition(
-        async (position) => {
-          const { latitude, longitude } = position.coords;
-          
-          // Reverse geocode using Nominatim
-          try {
-            const response = await fetch(
-              `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json&addressdetails=1`,
-              { headers: { 'User-Agent': 'SmartAllocator/1.0' } }
-            );
-            const data = await response.json();
-            const address = data.address || {};
-            
-            const area = address.suburb || address.neighbourhood || address.quarter || '';
-            const city = address.city || address.town || address.village || '';
-            const pincode = address.postcode || '';
-
-            setLocationData({ latitude, longitude, area, city, pincode });
-            form.setFieldsValue({ 
-              neighborhood: area || city || '',
-              manualPincode: pincode
-            });
-
-            message.success(`Location detected: ${area || city} (${pincode})`);
-          } catch {
-            // Fallback: use coordinates directly
-            setLocationData({ latitude, longitude, area: '', city: '', pincode: '' });
-            form.setFieldsValue({ neighborhood: `${latitude.toFixed(4)}, ${longitude.toFixed(4)}` });
-            message.warning('Could not resolve address, but GPS coordinates are saved.');
-          }
-          
-          setIsLocating(false);
-        },
-        (geoError) => {
-          message.error('Failed to get location. Please allow GPS permissions.');
-          setIsLocating(false);
-        },
-        { enableHighAccuracy: true, timeout: 10000 }
-      );
-    } else {
-      message.error('Geolocation is not supported by your browser.');
-      setIsLocating(false);
-    }
+  const handleLocationChange = (locData) => {
+    setLocationData(locData);
+    form.setFieldsValue({
+      street: locData.street || '',
+      area: locData.area || '',
+      city: locData.city || '',
+      state: locData.state || '',
+      pincode: locData.pincode || '',
+    });
   };
 
   const [otpSent, setOtpSent] = useState(false);
@@ -145,6 +109,11 @@ const RegisterVolunteer = ({ onSuccess }) => {
         phone: values.phoneNumber,
         latitude: locationData.latitude,
         longitude: locationData.longitude,
+        street: values.street,
+        area: values.area,
+        city: values.city,
+        state: values.state,
+        pincode: values.pincode,
         skills: values.skills,
         availability: values.availability,
         hasVehicle: values.hasVehicle || false,
@@ -278,29 +247,47 @@ const RegisterVolunteer = ({ onSuccess }) => {
 
             <Form.Item label="Your Location" required>
               <Alert 
-                message="GPS Location Required" 
-                description="We use your precise coordinates to show you nearby tasks. Please click the button below to auto-detect your location."
+                message="Pick Location on Map" 
+                description="Move the pin to your precise location. This will auto-fill your address, which you can edit below if needed."
                 type="info" 
                 showIcon 
                 style={{ marginBottom: '16px', borderRadius: '8px' }}
               />
-              <Button 
-                size="large" 
-                icon={<CompassOutlined />} 
-                onClick={handleAutoDetectLocation}
-                loading={isLocating}
-                type={locationData ? 'primary' : 'default'}
-                block
-                style={{ height: '50px', fontSize: '16px', fontWeight: 600 }}
-              >
-                {locationData ? '✓ Location Detected' : 'Click to Auto-detect GPS Location'}
-              </Button>
+              <LocationPickerMap onLocationChange={handleLocationChange} />
               
-              {locationData && (
-                <div style={{ marginTop: '12px', padding: '12px', background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: '8px', fontSize: '13px', color: '#389e0d' }}>
-                  <EnvironmentOutlined /> <strong>GPS Active:</strong> {locationData.area ? `${locationData.area}, ` : ''}{locationData.city} ({locationData.pincode})
-                </div>
-              )}
+              <div style={{ marginTop: '16px' }}>
+                <Row gutter={16}>
+                  <Col xs={24}>
+                    <Form.Item name="street" label="Street / Landmark">
+                      <Input placeholder="Street name or nearby landmark" />
+                    </Form.Item>
+                  </Col>
+                </Row>
+                <Row gutter={16}>
+                  <Col xs={24} md={12}>
+                    <Form.Item name="area" label="Area / District" rules={[{ required: true, message: 'Area is required' }]}>
+                      <Input placeholder="E.g. Andheri West" />
+                    </Form.Item>
+                  </Col>
+                  <Col xs={24} md={12}>
+                    <Form.Item name="city" label="City" rules={[{ required: true, message: 'City is required' }]}>
+                      <Input placeholder="E.g. Mumbai" />
+                    </Form.Item>
+                  </Col>
+                </Row>
+                <Row gutter={16}>
+                  <Col xs={24} md={12}>
+                    <Form.Item name="state" label="State" rules={[{ required: true, message: 'State is required' }]}>
+                      <Input placeholder="E.g. Maharashtra" />
+                    </Form.Item>
+                  </Col>
+                  <Col xs={24} md={12}>
+                    <Form.Item name="pincode" label="Pincode" rules={[{ required: true, message: 'Valid 6-digit Pincode required', pattern: /^\d{6}$/ }]}>
+                      <Input placeholder="E.g. 400053" maxLength={6} />
+                    </Form.Item>
+                  </Col>
+                </Row>
+              </div>
             </Form.Item>
 
             <Form.Item name="availability" label="Availability" rules={[{ required: true, message: 'Please select your available days!' }]}>
