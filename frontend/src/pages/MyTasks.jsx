@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Card, List, Typography, Button, Space, Tag, Modal, InputNumber, message, Divider, Empty, Spin, Alert, Avatar } from 'antd';
-import { CheckCircleOutlined, UserOutlined, ClockCircleOutlined, SettingOutlined, TrophyOutlined, PlayCircleOutlined, ArrowLeftOutlined } from '@ant-design/icons';
+import { Card, List, Typography, Button, Space, Tag, Modal, Input, message, Divider, Empty, Spin, Alert, Avatar } from 'antd';
+import { CheckCircleOutlined, UserOutlined, ClockCircleOutlined, SettingOutlined, TrophyOutlined, PlayCircleOutlined, ArrowLeftOutlined, FileTextOutlined } from '@ant-design/icons';
 import { getMyTasks, updateVolunteerDays, completeTask, startTask } from '../api';
 
 const { Title, Text } = Typography;
+const { TextArea } = Input;
 
 const MyTasks = ({ user }) => {
   const navigate = useNavigate();
@@ -13,6 +14,15 @@ const MyTasks = ({ user }) => {
   const [managerModalVisible, setManagerModalVisible] = useState(false);
   const [selectedTask, setSelectedTask] = useState(null);
   const [updating, setUpdating] = useState(false);
+
+  // Completion flow state
+  const [completionStep, setCompletionStep] = useState('manage'); // 'manage' | 'confirm'
+  const [findings, setFindings] = useState('');
+  const [summary, setSummary] = useState('');
+
+  // Findings viewer for completed tasks
+  const [findingsModalVisible, setFindingsModalVisible] = useState(false);
+  const [viewingFindings, setViewingFindings] = useState(null);
 
   useEffect(() => {
     fetchTasks();
@@ -48,9 +58,12 @@ const MyTasks = ({ user }) => {
   const handleCompleteTask = async () => {
     setUpdating(true);
     try {
-      await completeTask(selectedTask._id);
+      await completeTask(selectedTask._id, findings, summary);
       message.success('Task marked as complete! Points distributed.');
       setManagerModalVisible(false);
+      setCompletionStep('manage');
+      setFindings('');
+      setSummary('');
       fetchTasks();
     } catch (err) {
       message.error('Failed to complete task');
@@ -67,6 +80,23 @@ const MyTasks = ({ user }) => {
     } catch (err) {
       message.error('Failed to start task');
     }
+  };
+
+  const openManagerModal = (task) => {
+    setSelectedTask(task);
+    setCompletionStep('manage');
+    setFindings('');
+    setSummary('');
+    setManagerModalVisible(true);
+  };
+
+  const openFindingsModal = (task) => {
+    setViewingFindings(task);
+    setFindingsModalVisible(true);
+  };
+
+  const getUrgency = (task) => {
+    return parseInt(task?.['scale of urgency'] || task?.urgency || 1);
   };
 
   if (loading) return <div style={{ textAlign: 'center', padding: '100px' }}><Spin size="large" /></div>;
@@ -112,9 +142,17 @@ const MyTasks = ({ user }) => {
                   <Button 
                     type="primary" 
                     icon={<SettingOutlined />} 
-                    onClick={() => { setSelectedTask(task); setManagerModalVisible(true); }}
+                    onClick={() => openManagerModal(task)}
                   >
                     Manager Control
+                  </Button>
+                ),
+                task.status === 'completed' && task.field_findings && (
+                  <Button 
+                    icon={<FileTextOutlined />} 
+                    onClick={() => openFindingsModal(task)}
+                  >
+                    View Findings
                   </Button>
                 )
               ]}
@@ -171,53 +209,175 @@ const MyTasks = ({ user }) => {
           </Space>
         }
         open={managerModalVisible}
-        onCancel={() => setManagerModalVisible(false)}
-        footer={[
-          <Button key="close" onClick={() => setManagerModalVisible(false)}>Close</Button>,
-          <Button 
-            key="done" 
-            type="primary" 
-            danger 
-            icon={<CheckCircleOutlined />} 
-            onClick={handleCompleteTask}
-            loading={updating}
-          >
-            Mark Task as Done (Award Points)
-          </Button>
-        ]}
+        onCancel={() => { setManagerModalVisible(false); setCompletionStep('manage'); }}
+        footer={
+          completionStep === 'manage' ? [
+            <Button key="close" onClick={() => setManagerModalVisible(false)}>Close</Button>,
+            selectedTask?.status !== 'completed' && (
+              <Button 
+                key="next" 
+                type="primary" 
+                danger 
+                icon={<CheckCircleOutlined />} 
+                onClick={() => setCompletionStep('confirm')}
+              >
+                Finish Task →
+              </Button>
+            )
+          ] : [
+            <Button key="back" onClick={() => setCompletionStep('manage')}>← Back to Attendance</Button>,
+            <Button 
+              key="done" 
+              type="primary" 
+              danger 
+              icon={<CheckCircleOutlined />} 
+              onClick={handleCompleteTask}
+              loading={updating}
+            >
+              Confirm & Award Points
+            </Button>
+          ]
+        }
+        width={650}
+      >
+        {completionStep === 'manage' ? (
+          <>
+            <Alert 
+              message="Manager Mode" 
+              description={
+                selectedTask?.status === 'completed' 
+                  ? "This task is already completed. You can view the attendance records below."
+                  : "As the volunteer with the most points on this task, you are the manager. Track daily attendance here. When the work is done, click 'Finish Task' to record findings and award points."
+              }
+              type="info" 
+              showIcon 
+              style={{ marginBottom: '20px' }}
+            />
+
+            <List
+              header={<Text strong>Volunteer Attendance</Text>}
+              dataSource={selectedTask?.assigned_volunteers || []}
+              renderItem={v => {
+                const urgency = getUrgency(selectedTask);
+                const estimatedPoints = (v.days_worked || 0) * urgency;
+                return (
+                  <List.Item
+                    actions={
+                      selectedTask?.status !== 'completed' ? [
+                        <Button 
+                          size="small" 
+                          type="primary" 
+                          onClick={() => handleUpdateDays(v.id, v.days_worked)}
+                        >
+                          +1 Day Present
+                        </Button>
+                      ] : []
+                    }
+                  >
+                    <List.Item.Meta
+                      avatar={<Avatar icon={<UserOutlined />} />}
+                      title={v.name}
+                      description={
+                        <span>
+                          Days Present: <Text strong>{v.days_worked || 0}</Text> | 
+                          Points: <Text type="success" strong>{estimatedPoints}</Text>
+                          <Text type="secondary" style={{ fontSize: '11px', marginLeft: '4px' }}>
+                            ({v.days_worked || 0} days × {urgency} urgency)
+                          </Text>
+                        </span>
+                      }
+                    />
+                  </List.Item>
+                );
+              }}
+            />
+          </>
+        ) : (
+          /* Completion confirmation step */
+          <>
+            <Alert 
+              message="Complete Task & Record Findings" 
+              description="Record what was done, key observations, and any learnings for future reference. This information will be stored for the knowledge base."
+              type="warning" 
+              showIcon 
+              style={{ marginBottom: '20px' }}
+            />
+
+            {/* Points Preview */}
+            <Card size="small" title="Points Preview" style={{ marginBottom: '16px', borderRadius: '8px', background: '#f6ffed', border: '1px solid #b7eb8f' }}>
+              {(selectedTask?.assigned_volunteers || []).map(v => {
+                const urgency = getUrgency(selectedTask);
+                const pts = (v.days_worked || 0) * urgency;
+                return (
+                  <div key={v.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0' }}>
+                    <Text>{v.name}</Text>
+                    <Text strong type="success">{pts} pts ({v.days_worked || 0} days × {urgency} urgency)</Text>
+                  </div>
+                );
+              })}
+            </Card>
+
+            <div style={{ marginBottom: '16px' }}>
+              <Text strong style={{ display: 'block', marginBottom: '6px' }}>Summary (brief overview)</Text>
+              <TextArea
+                rows={2}
+                placeholder="E.g. Food packets distributed to 120 families in Velachery within 3 days."
+                value={summary}
+                onChange={e => setSummary(e.target.value)}
+              />
+            </div>
+
+            <div style={{ marginBottom: '16px' }}>
+              <Text strong style={{ display: 'block', marginBottom: '6px' }}>Field Findings & Learnings</Text>
+              <TextArea
+                rows={5}
+                placeholder="What was done? How was it done? Any challenges? Key learnings for future teams? Resources that helped?"
+                value={findings}
+                onChange={e => setFindings(e.target.value)}
+              />
+            </div>
+          </>
+        )}
+      </Modal>
+
+      {/* Findings Viewer Modal (for completed tasks) */}
+      <Modal
+        title={
+          <Space>
+            <FileTextOutlined />
+            <span>Field Findings: {viewingFindings?.surid}</span>
+          </Space>
+        }
+        open={findingsModalVisible}
+        onCancel={() => setFindingsModalVisible(false)}
+        footer={<Button onClick={() => setFindingsModalVisible(false)}>Close</Button>}
         width={600}
       >
-        <Alert 
-          title="Manager mode" 
-          description="As the volunteer with the most points on this task, you are the manager. Track daily participation here. Clicking 'Done' will calculate points (Days * 5) for everyone."
-          type="info" 
-          showIcon 
-          style={{ marginBottom: '20px' }}
-        />
-
-        <List
-          header={<Text strong>Assign Daily Credits</Text>}
-          dataSource={selectedTask?.assigned_volunteers || []}
-          renderItem={v => (
-            <List.Item
-              actions={[
-                <Button 
-                  size="small" 
-                  type="primary" 
-                  onClick={() => handleUpdateDays(v.id, v.days_worked)}
-                >
-                  +1 Day Worked
-                </Button>
-              ]}
-            >
-              <List.Item.Meta
-                avatar={<Avatar icon={<UserOutlined />} />}
-                title={v.name}
-                description={<span>Days Worked: <Text strong>{v.days_worked || 0}</Text> | Est. Points: <Text type="success">{(v.days_worked || 0) * 5}</Text></span>}
-              />
-            </List.Item>
-          )}
-        />
+        {viewingFindings?.field_findings ? (
+          <>
+            {viewingFindings.field_findings.summary && (
+              <div style={{ marginBottom: '16px' }}>
+                <Text strong style={{ display: 'block', marginBottom: '4px' }}>Summary</Text>
+                <Card size="small" style={{ borderRadius: '8px', background: '#f0f5ff', border: '1px solid #adc6ff' }}>
+                  {viewingFindings.field_findings.summary}
+                </Card>
+              </div>
+            )}
+            {viewingFindings.field_findings.notes && (
+              <div style={{ marginBottom: '16px' }}>
+                <Text strong style={{ display: 'block', marginBottom: '4px' }}>Detailed Findings & Learnings</Text>
+                <Card size="small" style={{ borderRadius: '8px', background: '#fff7e6', border: '1px solid #ffd591' }}>
+                  <pre style={{ whiteSpace: 'pre-wrap', margin: 0, fontFamily: 'inherit' }}>{viewingFindings.field_findings.notes}</pre>
+                </Card>
+              </div>
+            )}
+            <Text type="secondary" style={{ fontSize: '12px' }}>
+              Recorded by {viewingFindings.field_findings.recorded_by} on {new Date(viewingFindings.field_findings.recorded_at).toLocaleString()}
+            </Text>
+          </>
+        ) : (
+          <Empty description="No findings were recorded for this task." />
+        )}
       </Modal>
     </div>
   );

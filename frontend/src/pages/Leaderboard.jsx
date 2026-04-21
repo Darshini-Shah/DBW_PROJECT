@@ -92,7 +92,7 @@ const Leaderboard = () => {
       <div style={{ textAlign: 'center', marginBottom: '32px' }}>
         <TrophyOutlined style={{ fontSize: '48px', color: '#ffd700', marginBottom: '16px' }} />
         <Title level={2}>Volunteer Leaderboard</Title>
-        <Text type="secondary">Top contributors making an impact in their communities.</Text>
+      <Text type="secondary">Top contributors making an impact in their communities. Points = Days Present × Issue Urgency.</Text>
       </div>
 
       <Card style={{ borderRadius: '16px', boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}>

@@ -186,6 +186,24 @@ class UpdateDaysRequest(BaseModel):
     volunteer_id: str
     days: int
 
+class CompleteTaskRequest(BaseModel):
+    findings: Optional[str] = ""
+    summary: Optional[str] = ""
+
+class ProfileUpdateRequest(BaseModel):
+    phone: Optional[str] = None
+    city: Optional[str] = None
+    area: Optional[str] = None
+    pincode: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    skills: Optional[List[str]] = None
+    availability: Optional[List[str]] = None
+    hasVehicle: Optional[bool] = None
+
+class IssueCommentRequest(BaseModel):
+    comment: str
+
 
 # ── FastAPI App ─────────────────────────────────────────────────────────────────
 
@@ -508,6 +526,144 @@ async def get_me(current_user: dict = Depends(get_current_user)):
             "points": current_user.get("points", 0),
         }
     }
+
+
+@app.put("/auth/me")
+async def update_me(req: ProfileUpdateRequest, current_user: dict = Depends(get_current_user)):
+    collection = volunteer_collection if current_user["role"] == "volunteer" else field_worker_collection
+    
+    update_data = {}
+    if req.phone is not None: update_data["phone"] = req.phone
+    if req.skills is not None: update_data["skills"] = req.skills
+    if req.availability is not None: update_data["availability"] = req.availability
+    if req.hasVehicle is not None: update_data["hasVehicle"] = req.hasVehicle
+    
+    # Location updates
+    if req.latitude is not None and req.longitude is not None:
+        update_data["location"] = {"type": "Point", "coordinates": [req.longitude, req.latitude]}
+        update_data["latitude"] = req.latitude
+        update_data["longitude"] = req.longitude
+        try:
+            geo = await reverse_geocode(req.latitude, req.longitude)
+            update_data["pincode"] = geo["pincode"]
+            update_data["city"] = geo["city"]
+            update_data["area"] = geo["area"]
+            update_data["state"] = geo["state"]
+        except Exception:
+            pass # Keep existing or use provided
+    
+    # Allow manual override
+    if req.city is not None: update_data["city"] = req.city
+    if req.area is not None: update_data["area"] = req.area
+    if req.pincode is not None: update_data["pincode"] = req.pincode
+
+    if not update_data:
+        return {"message": "No data to update"}
+
+    collection.update_one({"_id": ObjectId(current_user["_id"])}, {"$set": update_data})
+    
+    # Fetch updated user to return
+    updated_user = collection.find_one({"_id": ObjectId(current_user["_id"])})
+    coords = updated_user.get("location", {}).get("coordinates", [0, 0])
+    
+    return {
+        "message": "Profile updated successfully",
+        "user": {
+            "id": str(updated_user["_id"]),
+            "email": updated_user["email"],
+            "role": updated_user["role"],
+            "fullName": updated_user["fullName"],
+            "phone": updated_user["phone"],
+            "pincode": updated_user.get("pincode", ""),
+            "city": updated_user.get("city", ""),
+            "area": updated_user.get("area", ""),
+            "latitude": coords[1] if len(coords) > 1 else 0,
+            "longitude": coords[0] if len(coords) > 0 else 0,
+            "skills": updated_user.get("skills", []),
+            "availability": updated_user.get("availability", []),
+            "hasVehicle": updated_user.get("hasVehicle", False),
+            "points": updated_user.get("points", 0),
+        }
+    }
+
+
+@app.get("/auth/me/analytics")
+async def get_me_analytics(current_user: dict = Depends(get_current_user)):
+    if current_user["role"] == "volunteer":
+        vol_id = current_user["_id"]
+        # Convert to string and ObjectId for flexibility
+        id_variants = [vol_id]
+        try: id_variants.append(ObjectId(vol_id))
+        except Exception: pass
+        
+        # Get all completed assignments
+        accepted = list(assignments_collection.find(
+            {"volunteer_id": {"$in": id_variants}, "status": "accepted"}
+        ))
+        issue_ids = []
+        for a in accepted:
+            try: issue_ids.append(ObjectId(a["issue_id"]))
+            except: pass
+        
+        issues = list(issues_collection.find({"_id": {"$in": issue_ids}, "status": "completed"}))
+        
+        total_active_days = 0
+        past_contributions = []
+        
+        for issue in issues:
+            days = 0
+            points_earned = 0
+            for vol in issue.get("assigned_volunteers", []):
+                if vol["id"] == vol_id:
+                    days = vol.get("days_worked", 0)
+                    urgency = int(issue.get("scale of urgency", 1))
+                    points_earned = days * urgency
+                    total_active_days += days
+                    break
+            
+            past_contributions.append({
+                "issue_id": str(issue["_id"]),
+                "surid": issue.get("surid"),
+                "category": issue.get("type of issue") or issue.get("category"),
+                "area": issue.get("geographical area"),
+                "days_worked": days,
+                "points_earned": points_earned,
+                "field_findings": issue.get("field_findings"),
+                "completed_at": issue.get("end_date")
+            })
+            
+        return {
+            "total_points": current_user.get("points", 0),
+            "total_active_days": total_active_days,
+            "tasks_completed": len(past_contributions),
+            "past_contributions": sorted(past_contributions, key=lambda x: x.get("completed_at") or "", reverse=True)
+        }
+    else:
+        # Field Worker
+        reports = list(issues_collection.find({"reported_by": current_user["_id"]}).sort("created_at", -1))
+        
+        stats = {"total": len(reports), "open": 0, "ongoing": 0, "completed": 0}
+        report_list = []
+        
+        for r in reports:
+            status = r.get("status", "open")
+            if status in stats: stats[status] += 1
+            else: stats["open"] += 1
+            
+            report_list.append({
+                "issue_id": str(r["_id"]),
+                "surid": r.get("surid"),
+                "category": r.get("type of issue") or r.get("category"),
+                "status": status,
+                "created_at": r.get("created_at"),
+                "comments": r.get("comments", []),
+                "field_findings": r.get("field_findings")
+            })
+            
+        return {
+            "stats": stats,
+            "reports": report_list
+        }
 
 
 # ── Issues Endpoints ────────────────────────────────────────────────────────────
@@ -910,7 +1066,13 @@ async def get_my_tasks(current_user: dict = Depends(get_current_user)):
         issue = issue_map.get(a["issue_id"])
         if issue:
             issue["_id"] = str(issue["_id"])
-            issue["is_manager"] = False  # simplified; manager logic can be added later
+            # Determine manager: volunteer with highest points in assigned_volunteers
+            assigned_vols = issue.get("assigned_volunteers", [])
+            if assigned_vols:
+                manager = max(assigned_vols, key=lambda x: x.get("points", 0))
+                issue["is_manager"] = (manager["id"] == vol_id)
+            else:
+                issue["is_manager"] = False
             issues.append(issue)
 
     return {"issues": issues}
@@ -972,8 +1134,8 @@ async def start_issue(issue_id: str, current_user: dict = Depends(get_current_us
 
 
 @app.post("/api/issues/{issue_id}/complete")
-async def complete_issue(issue_id: str, current_user: dict = Depends(get_current_user)):
-    """Manager marks task as done. Points are awarded."""
+async def complete_issue(issue_id: str, req: CompleteTaskRequest = CompleteTaskRequest(), current_user: dict = Depends(get_current_user)):
+    """Manager marks task as done. Points are awarded. Findings are stored."""
     issue = issues_collection.find_one({"_id": ObjectId(issue_id)})
     if not issue:
         raise HTTPException(status_code=404, detail="Issue not found")
@@ -989,30 +1151,82 @@ async def complete_issue(issue_id: str, current_user: dict = Depends(get_current
     if manager["id"] != current_user["_id"]:
         raise HTTPException(status_code=403, detail="Only the manager can complete the task")
 
-    # Update issue status and end date
+    # Build update payload
+    update_fields = {
+        "status": "completed",
+        "end_date": datetime.now(timezone.utc).isoformat()
+    }
+
+    # Store field findings if provided
+    if req.findings or req.summary:
+        update_fields["field_findings"] = {
+            "notes": req.findings or "",
+            "summary": req.summary or "",
+            "recorded_by": current_user.get("fullName", ""),
+            "recorded_by_id": current_user["_id"],
+            "recorded_at": datetime.now(timezone.utc).isoformat()
+        }
+
     issues_collection.update_one(
         {"_id": ObjectId(issue_id)},
-        {
-            "$set": {
-                "status": "completed",
-                "end_date": datetime.now(timezone.utc).isoformat()
-            }
-        }
+        {"$set": update_fields}
     )
 
-    # Award points to volunteers: days_worked * 5
+    # Award points to volunteers: days_worked * urgency
+    urgency = int(issue.get("scale of urgency", 1))
+    points_awarded = []
     for vol in assigned_vols:
         days = vol.get("days_worked", 0)
-        points_to_add = days * 5
+        points_to_add = days * urgency
         if points_to_add > 0:
             volunteer_collection.update_one(
                 {"_id": ObjectId(vol["id"])},
                 {"$inc": {"points": points_to_add}}
             )
+        points_awarded.append({"id": vol["id"], "name": vol.get("name", ""), "days": days, "points": points_to_add})
 
-    return {"message": "Task completed successfully. Points have been distributed."}
+    logger.info(f"Task {issue_id} completed by manager {current_user['fullName']}. Points: {points_awarded}")
+    return {"message": "Task completed successfully. Points have been distributed.", "points_awarded": points_awarded}
 
 
+
+@app.get("/api/issues/{issue_id}/findings")
+async def get_issue_findings(issue_id: str, current_user: dict = Depends(get_current_user)):
+    """Retrieve field findings for a completed issue."""
+    issue = issues_collection.find_one({"_id": ObjectId(issue_id)})
+    if not issue:
+        raise HTTPException(status_code=404, detail="Issue not found")
+
+    findings = issue.get("field_findings", None)
+    return {
+        "surid": issue.get("surid"),
+        "status": issue.get("status"),
+        "field_findings": findings
+    }
+
+
+@app.post("/api/issues/{issue_id}/comments")
+async def add_issue_comment(issue_id: str, req: IssueCommentRequest, current_user: dict = Depends(get_current_user)):
+    """Field worker adds a comment to an issue they reported."""
+    issue = issues_collection.find_one({"_id": ObjectId(issue_id)})
+    if not issue:
+        raise HTTPException(status_code=404, detail="Issue not found")
+        
+    if issue.get("reported_by") != current_user["_id"]:
+        raise HTTPException(status_code=403, detail="Only the reporter can add comments to this issue")
+        
+    comment_doc = {
+        "text": req.comment,
+        "added_at": datetime.now(timezone.utc).isoformat(),
+        "added_by": current_user.get("fullName")
+    }
+    
+    issues_collection.update_one(
+        {"_id": ObjectId(issue_id)},
+        {"$push": {"comments": comment_doc}}
+    )
+    
+    return {"message": "Comment added successfully", "comment": comment_doc}
 
 
 # Notifications endpoints removed
