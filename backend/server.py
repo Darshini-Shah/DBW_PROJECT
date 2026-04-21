@@ -532,6 +532,10 @@ async def get_issues(
     if status_filter:
         query["status"] = status_filter
 
+    # If volunteer, exclude issues where they are already assigned
+    if current_user.get("role") == "volunteer":
+        query["assigned_volunteers.id"] = {"$ne": current_user["_id"]}
+
     # Determine coordinates
     lat = latitude
     lng = longitude
@@ -782,9 +786,9 @@ async def accept_issue(issue_id: str, current_user: dict = Depends(get_current_u
 
         vol_id = current_user["_id"]
 
-        # Check if there's an invite record for this volunteer
+        # Check if there's an invite record for this volunteer (using surid for index consistency)
         invite = assignments_collection.find_one(
-            {"issue_id": issue_id, "volunteer_id": vol_id}
+            {"surid": issue.get("surid"), "volunteer_id": vol_id}
         )
 
         if invite and invite.get("status") == "accepted":
@@ -802,28 +806,42 @@ async def accept_issue(issue_id: str, current_user: dict = Depends(get_current_u
             )
 
         now = datetime.now(timezone.utc).isoformat()
+        
+        # 1. Update/Upsert the assignment record
+        assignments_collection.update_one(
+            {"surid": issue.get("surid"), "volunteer_id": vol_id},
+            {
+                "$set": {
+                    "issue_id": issue_id,
+                    "volunteer_name": current_user.get("fullName", ""),
+                    "volunteer_email": current_user.get("email", ""),
+                    "volunteer_phone": current_user.get("phone", ""),
+                    "status": "accepted",
+                    "accepted_at": now
+                },
+                "$setOnInsert": {
+                    "invited_at": None
+                }
+            },
+            upsert=True
+        )
 
-        if invite:
-            # Update existing invitation to accepted
-            assignments_collection.update_one(
-                {"_id": invite["_id"]},
-                {"$set": {"status": "accepted", "accepted_at": now}}
-            )
-        else:
-            # Volunteer accepted directly (e.g. via app, not through matcher invite)
-            assignments_collection.insert_one({
-                "surid":           issue.get("surid"),
-                "issue_id":        issue_id,
-                "volunteer_id":    vol_id,
-                "volunteer_name":  current_user.get("fullName", ""),
-                "volunteer_email": current_user.get("email", ""),
-                "volunteer_phone": current_user.get("phone", ""),
-                "status":          "accepted",
-                "invited_at":      None,
-                "accepted_at":     now,
-            })
+        # 2. Add to issue's assigned_volunteers using $addToSet (prevents duplicates)
+        vol_entry = {
+            "id": vol_id,
+            "name": current_user.get("fullName", ""),
+            "points": current_user.get("points", 0),
+            "days_worked": 0
+        }
+        issues_collection.update_one(
+            {"_id": ObjectId(issue_id)},
+            {"$addToSet": {"assigned_volunteers": vol_entry}}
+        )
 
-        new_accepted_count = accepted_count + 1
+        # Calculate new count
+        new_accepted_count = assignments_collection.count_documents(
+            {"issue_id": issue_id, "status": "accepted"}
+        )
 
         # If we just hit the cap → mark issue as ongoing
         if new_accepted_count >= num_needed:
@@ -833,10 +851,7 @@ async def accept_issue(issue_id: str, current_user: dict = Depends(get_current_u
             )
             logger.info(f"Issue {issue_id} is now fully staffed → status: ongoing")
 
-        logger.info(
-            f"Issue {issue_id} accepted by {current_user['fullName']} "
-            f"({new_accepted_count}/{num_needed})"
-        )
+        logger.info(f"Issue {issue_id} accepted successfully by {current_user['fullName']} ({new_accepted_count}/{num_needed})")
         return {
             "message": "Issue accepted successfully",
             "accepted": new_accepted_count,
@@ -847,8 +862,8 @@ async def accept_issue(issue_id: str, current_user: dict = Depends(get_current_u
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error accepting issue: {e}")
-        raise HTTPException(status_code=500, detail="Failed to accept issue")
+        logger.error(f"Error in accept_issue: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Accept failed: {str(e)}")
 
 
 @app.get("/api/issues/my-tasks")
