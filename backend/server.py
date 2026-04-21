@@ -48,7 +48,7 @@ volunteer_collection = db["volunteer"]
 field_worker_collection = db["field_worker"]  # Fixed typo: feild_worker -> field_worker
 otp_collection = db["otp_registry"]
 issues_collection = db["issues"]
-notifications_collection = db["notifications"]
+# notifications_collection removed
 assignments_collection = db["assignments"]   # volunteer invites & acceptances
 
 # Create indexes
@@ -745,50 +745,13 @@ async def create_issue(
     result = issues_collection.insert_one(issue_doc)
     issue_doc["_id"] = str(result.inserted_id)
 
-    # Create notifications for nearby volunteers based on urgency radius
-    radius_km = get_radius_km_for_urgency(req.urgency)
-    radius_meters = radius_km * 1000
-
-    nearby_volunteers = list(volunteer_collection.find({
-        "location": {
-            "$nearSphere": {
-                "$geometry": {
-                    "type": "Point",
-                    "coordinates": [req.longitude, req.latitude],
-                },
-                "$maxDistance": radius_meters,
-            }
-        }
-    }))
-
-    # Notify nearby volunteers
-    notification_docs = []
-    for vol in nearby_volunteers:
-        notification_docs.append({
-            "user_id": str(vol["_id"]),
-            "issue_id": str(result.inserted_id),
-            "surid": surid,
-            "type": "new_issue",
-            "title": f"New {req.category} issue near you!",
-            "message": f"{req.description[:100]}..." if len(req.description) > 100 else req.description,
-            "urgency": req.urgency,
-            "area": geo["area"],
-            "city": geo["city"],
-            "read": False,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        })
-
-    if notification_docs:
-        notifications_collection.insert_many(notification_docs)
-        logger.info(f"Notified {len(notification_docs)} nearby volunteers for {surid}")
-
     # Trigger background email if urgency > 7
     if req.urgency > 7:
         background_tasks.add_task(send_urgent_issue_email, issue_doc)
 
     logger.info(f"Issue {surid} created at {geo['area']}, {geo['city']} (urgency: {req.urgency}, radius: {radius_km}km)")
 
-    return {"issue": issue_doc, "volunteers_notified": len(notification_docs)}
+    return {"issue": issue_doc}
 
 
 @app.post("/api/issues/{issue_id}/accept")
@@ -1035,31 +998,9 @@ async def complete_issue(issue_id: str, current_user: dict = Depends(get_current
     return {"message": "Task completed successfully. Points have been distributed."}
 
 
-# ── Notifications Endpoints ─────────────────────────────────────────────────────
-
-@app.get("/api/notifications")
-async def get_notifications(current_user: dict = Depends(get_current_user)):
-    """Fetch unread notifications for the current user."""
-    notifs = list(
-        notifications_collection.find(
-            {"user_id": current_user["_id"], "read": False}
-        )
-        .sort("created_at", -1)
-        .limit(20)
-    )
-    for n in notifs:
-        n["_id"] = str(n["_id"])
-    return {"notifications": notifs, "count": len(notifs)}
 
 
-@app.post("/api/notifications/mark-read")
-async def mark_notifications_read(current_user: dict = Depends(get_current_user)):
-    """Mark all notifications as read."""
-    result = notifications_collection.update_many(
-        {"user_id": current_user["_id"], "read": False},
-        {"$set": {"read": True}},
-    )
-    return {"marked": result.modified_count}
+# Notifications endpoints removed
 
 
 # ── Nearby Volunteers (for field workers to see available help) ──────────────

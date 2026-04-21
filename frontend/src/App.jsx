@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Routes, Route, useNavigate, Navigate } from 'react-router-dom';
-import { LogoutOutlined, UserOutlined, LoginOutlined, EnvironmentOutlined, BellOutlined, CheckOutlined } from '@ant-design/icons';
+import { LogoutOutlined, UserOutlined, LoginOutlined, EnvironmentOutlined } from '@ant-design/icons';
 import { Layout, Typography, ConfigProvider, Button, Tag, Space, Badge, Dropdown, List, Empty, Card, Popover } from 'antd';
 import LoginPage from './pages/LoginPage';
 import RoleSelection from './pages/RoleSelection';
@@ -11,7 +11,7 @@ import Volunteer from './pages/Volunteer';
 import Leaderboard from './pages/Leaderboard';
 import MyTasks from './pages/MyTasks';
 import DemandHeatmap from './pages/DemandHeatmap';
-import { logout, getMe, getNotifications } from './api';
+import { logout, getMe } from './api';
 import './App.css';
 
 const { Header, Content, Footer } = Layout;
@@ -20,8 +20,6 @@ const { Title, Text } = Typography;
 function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [notificationCount, setNotificationCount] = useState(0);
-  const [notifications, setNotifications] = useState([]);
   const navigate = useNavigate();
 
   // Restore session from JWT on app load
@@ -39,77 +37,13 @@ function App() {
     setLoading(false);
   }, []);
 
-  // Poll for notifications every 30 seconds when logged in
-  useEffect(() => {
-    if (!user) return;
-
-    const fetchNotifications = async () => {
-      try {
-        const data = await getNotifications();
-        setNotifications(data.notifications || []);
-        setNotificationCount(data.count || 0);
-      } catch {
-        // Silently fail if not authenticated
-      }
-    };
-
-    fetchNotifications();
-    const interval = setInterval(fetchNotifications, 30000);
-    return () => clearInterval(interval);
-  }, [user]);
+  // user effect removed notifications polling
 
   const handleLogout = () => {
     logout();
     setUser(null);
-    setNotifications([]);
-    setNotificationCount(0);
     navigate('/');
   };
-
-  const handleMarkRead = async () => {
-    try {
-      await import('./api').then(m => m.markNotificationsRead());
-      setNotificationCount(0);
-      setNotifications([]);
-    } catch (err) {
-      console.error("Failed to mark read", err);
-    }
-  };
-
-  const notificationMenu = (
-    <Card 
-      title="Notifications" 
-      extra={<Button type="link" size="small" onClick={handleMarkRead} icon={<CheckOutlined />}>Mark all read</Button>}
-      styles={{ body: { padding: 0 } }}
-      style={{ width: 300, boxShadow: '0 4px 12px rgba(0,0,0,0.15)', borderRadius: '12px' }}
-    >
-      <List
-        dataSource={notifications}
-        locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No new alerts" /> }}
-        renderItem={item => (
-          <List.Item 
-            style={{ padding: '12px 16px', cursor: 'pointer' }} 
-            onClick={() => {
-              if (item.issue_id) navigate('/volunteer'); // or relevant page
-            }}
-          >
-            <List.Item.Meta
-              title={<Text strong style={{ fontSize: '13px' }}>{item.title}</Text>}
-              description={
-                <div style={{ fontSize: '12px' }}>
-                  {item.message}
-                  <div style={{ marginTop: '4px', color: '#bfbfbf', fontSize: '11px' }}>
-                    {item.area}, {item.city}
-                  </div>
-                </div>
-              }
-            />
-          </List.Item>
-        )}
-        style={{ maxHeight: '400px', overflowY: 'auto' }}
-      />
-    </Card>
-  );
 
   const handleAuthSuccess = (userData) => {
     setUser(userData);
@@ -175,13 +109,7 @@ function App() {
                 {user.area ? `${user.area}, ${user.city}` : user.city || 'Unknown'}
               </Tag>
 
-              {/* Notification bell */}
-              <Dropdown dropdownRender={() => notificationMenu} trigger={['click']} placement="bottomRight">
-                <Badge count={notificationCount} size="small">
-                  <BellOutlined style={{ fontSize: '18px', color: '#595959', cursor: 'pointer' }} />
-                </Badge>
-              </Dropdown>
-
+              {/* Demand Map */}
               <button 
                 className="premium-heatmap-btn"
                 onClick={() => navigate('/heatmap')}
@@ -211,6 +139,16 @@ function App() {
                         <div>
                           <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: '2px' }}>Phone</Text>
                           <Text style={{ fontWeight: 500, color: '#1f1f1f' }}>{user.phone}</Text>
+                        </div>
+                      )}
+                      {user.skills && user.skills.length > 0 && (
+                        <div>
+                          <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: '4px' }}>Skills</Text>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                            {user.skills.map(skill => (
+                              <Tag key={skill} color="blue" style={{ margin: 0, fontSize: '11px' }}>{skill}</Tag>
+                            ))}
+                          </div>
                         </div>
                       )}
                     </div>

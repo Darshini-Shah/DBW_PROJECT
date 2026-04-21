@@ -3,8 +3,7 @@ import { List, Card, Typography, Badge, Button, Space, Empty, Spin, Tag, Slider,
 import { ArrowLeftOutlined, CheckCircleOutlined, ReloadOutlined, EnvironmentOutlined, ClockCircleOutlined, FilterOutlined, TrophyOutlined, CarryOutOutlined } from '@ant-design/icons';
 import { getIssues, acceptIssue } from '../api';
 import { useNavigate } from 'react-router-dom';
-import { ToastContainer, toast } from 'react-toastify';
-import 'react-toastify/dist/ReactToastify.css';
+// react-toastify removed
 
 const { Title, Text } = Typography;
 
@@ -27,7 +26,6 @@ const Volunteer = ({ user }) => {
   const [accepting, setAccepting] = useState(null);
   const [radiusKm, setRadiusKm] = useState(15);
   const navigate = useNavigate();
-  const [knownIssueIds, setKnownIssueIds] = useState(new Set());
   const initialLoadDone = React.useRef(false);
 
   const fetchIssues = useCallback(async (overridingRadius = null) => {
@@ -45,23 +43,8 @@ const Volunteer = ({ user }) => {
       
       setIssues(fetchedIssues);
 
-      // Check for new issues to trigger toast
-      if (initialLoadDone.current) {
-        fetchedIssues.forEach(issue => {
-          if (!knownIssueIds.has(issue._id)) {
-            const locationName = issue['geographical area'] || issue.city || 'your area';
-            toast.info(`New task available in ${locationName}!`, {
-              position: "top-right",
-              autoClose: 5000,
-            });
-          }
-        });
-      } else {
-        initialLoadDone.current = true;
-      }
-      
-      // Update known IDs
-      setKnownIssueIds(new Set(fetchedIssues.map(i => i._id)));
+      // Toast notifications removed
+      initialLoadDone.current = true;
       
     } catch (err) {
       console.error('Failed to fetch issues:', err);
@@ -73,11 +56,10 @@ const Volunteer = ({ user }) => {
 
   useEffect(() => {
     fetchIssues();
-    // Auto-refresh every 60s
+    // Auto-refresh every 60s using the latest radius
     const interval = setInterval(() => fetchIssues(), 60000);
     return () => clearInterval(interval);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user]); // Only re-fetch if user changes, slider uses onChangeComplete
+  }, [fetchIssues]); 
 
   const handleAccept = async (issueId) => {
     setAccepting(issueId);
@@ -95,7 +77,7 @@ const Volunteer = ({ user }) => {
 
   return (
     <div style={{ maxWidth: '800px', margin: '0 auto' }}>
-      <ToastContainer />
+      {/* ToastContainer removed */}
       <div style={{ marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'nowrap', gap: '12px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px', minWidth: 0 }}>
           <Button 

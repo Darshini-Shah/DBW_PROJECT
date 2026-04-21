@@ -49,7 +49,7 @@ class VolunteerMatcher:
             self.issues_collection      = self.db["issues"]
             self.volunteers_collection  = self.db["volunteer"]
             self.assignments_collection = self.db["assignments"]
-            self.notifications_collection = self.db["notifications"]
+            # notifications_collection removed
             logger.info(f"Connected to database: {db_name}")
         except errors.ConnectionFailure as e:
             logger.error(f"Could not connect to MongoDB: {e}")
@@ -190,7 +190,7 @@ class VolunteerMatcher:
             # Create invitation records
             now = datetime.now(timezone.utc).isoformat()
             invite_docs = []
-            notification_docs = []
+            # notification_docs removed
 
             for v in new_invites:
                 invite_docs.append({
@@ -205,25 +205,10 @@ class VolunteerMatcher:
                     "accepted_at":     None,
                 })
 
-                # Also create a formal notification for the volunteer
-                notification_docs.append({
-                    "user_id": str(v["_id"]),
-                    "issue_id": issue_id,
-                    "surid": surid,
-                    "type": "new_invite",
-                    "title": f"You were invited to help with {issue.get('type of issue')}",
-                    "message": f"We need your specific skills for an issue reported at {issue.get('geographical area')}.",
-                    "urgency": issue.get("scale of urgency", 5),
-                    "area": issue.get("area", ""),
-                    "city": issue.get("city", ""),
-                    "read": False,
-                    "created_at": now,
-                })
+                # notification logic removed
 
             if invite_docs:
                 self.assignments_collection.insert_many(invite_docs)
-            if notification_docs:
-                self.notifications_collection.insert_many(notification_docs)
                 
             total_invites += len(invite_docs)
 

@@ -86,17 +86,7 @@ export const acceptIssue = async (issueId) => {
   return res.data;
 };
 
-// ── Notifications ───────────────────────────────
-
-export const getNotifications = async () => {
-  const res = await api.get('/api/notifications');
-  return res.data;
-};
-
-export const markNotificationsRead = async () => {
-  const res = await api.post('/api/notifications/mark-read');
-  return res.data;
-};
+// ── Notifications removed
 
 // ── Survey Upload ───────────────────────────────
 

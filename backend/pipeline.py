@@ -227,7 +227,6 @@ async def upload_surveys_to_db(
     db = client[DB_NAME]
     issues_collection = db["issues"]
     counters_collection = db["counters"]
-    notifications_collection = db["notifications"]
     volunteer_collection = db["volunteer"]
     users_collection = db["users"]
 
@@ -315,52 +314,7 @@ async def upload_surveys_to_db(
         real_issue_id_str = str(result.inserted_id)
         inserted_ids.append(surid) # Return surid as expected by other parts of backend
 
-        # Notify nearby volunteers based on urgency
-        urgency = survey.get("scale of urgency") or survey.get("urgency") or 5
-        if isinstance(urgency, (int, float, str)):
-            try:
-                urgency_int = int(float(urgency))
-                radius_km = get_radius_km_for_urgency(urgency_int)
-                radius_meters = radius_km * 1000
-
-                nearby_volunteers = list(
-                    volunteer_collection.find(
-                        {
-                            "location": {
-                                "$nearSphere": {
-                                    "$geometry": issue_doc["location"],
-                                    "$maxDistance": radius_meters,
-                                }
-                            },
-                        }
-                    )
-                )
-
-                notification_docs = []
-                for vol in nearby_volunteers:
-                    notification_docs.append(
-                        {
-                            "user_id": str(vol["_id"]),
-                            "issue_id": real_issue_id_str, 
-                            "surid": surid,
-                            "type": "new_issue",
-                            "title": f"New {issue_doc['type of issue']} issue from survey!",
-                            "message": issue_doc["what is the issue"][:100],
-                            "urgency": urgency,
-                            "area": issue_doc.get("area", ""),
-                            "city": issue_doc.get("city", ""),
-                            "read": False,
-                            "created_at": datetime.now(timezone.utc).isoformat(),
-                        }
-                    )
-
-                if notification_docs:
-                    notifications_collection.insert_many(notification_docs)
-                    logger.info(
-                        f"Notified {len(notification_docs)} volunteers for {surid}"
-                    )
-            except Exception as e:
-                logger.warning(f"Could not notify volunteers for {surid}: {e}")
+        # Volunteer notification logic removed
 
         logger.info(f"Uploaded issue {surid}: {issue_doc['type of issue']}")
 
