@@ -84,3 +84,23 @@ urllib3>=1.26.0
 uvicorn>=0.20.0
 watchfiles>=0.18.0
 websockets>=11.0
+# Core Backend
+fastapi
+uvicorn
+pymongo
+python-dotenv
+python-multipart
+python-jose[cryptography]
+passlib[bcrypt]
+
+# AI & OCR
+google-generativeai
+easyocr
+PyMuPDF
+numpy
+pillow
+
+# Network & Utilities
+httpx
+fastapi-mail
+jinja2

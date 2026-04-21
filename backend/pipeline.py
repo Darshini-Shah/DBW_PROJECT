@@ -191,6 +191,7 @@ async def upload_surveys_to_db(
     counters_collection = db["counters"]
     notifications_collection = db["notifications"]
     volunteer_collection = db["volunteer"]
+    users_collection = db["users"]
 
     inserted_ids = []
 
@@ -231,54 +232,60 @@ async def upload_surveys_to_db(
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
 
-        # For backward compatibility with other parts of the app that expect "area"
-        issue_doc["area"] = issue_doc["district"] or issue_doc["state"] or ""
-
-        # 1. Set coordinates: Prioritize survey's own location, fallback to reporter
-        if survey.get("location", {}).get("coordinates"):
-            issue_doc["location"] = survey["location"]
+        # Add geo-location logic
+        from geocoding import forward_geocode, reverse_geocode
+        
+        lat, lng = 0.0, 0.0
+        pincode = survey.get("pincode", "")
+        city = ""
+        area = survey.get("geographical area", "")
+        
+        # Try to geocode the extracted address
+        geo_result = await forward_geocode(
+            survey.get("landmark", ""),
+            "", # City
+            survey.get("district", ""),
+            "", # State
+            pincode
+        )
+        
+        if geo_result["success"]:
+            lat, lng = geo_result["latitude"], geo_result["longitude"]
+            pincode = geo_result["pincode"] or pincode
+            city = geo_result["city"]
+            area = geo_result["area"] or area
+            issue_doc["location"] = {"type": "Point", "coordinates": [lng, lat]}
         elif reporter_location:
+            # Fallback to reporter location
             issue_doc["location"] = reporter_location
-
-        # 2. Fill missing address fields using reverse geocoding ONLY if we have survey-specific coordinates
-        has_survey_coords = bool(survey.get("location", {}).get("coordinates"))
-        if issue_doc.get("location") and has_survey_coords:
-            coords = issue_doc["location"].get("coordinates", [0, 0])
+            coords = reporter_location.get("coordinates", [0, 0])
+            lng, lat = coords[0], coords[1]
             try:
-                # Fill missing district/state/city/pincode
-                if not (issue_doc.get("district") and issue_doc.get("city") and issue_doc.get("pincode")):
-                    geo = await reverse_geocode(coords[1], coords[0])
-                    if not issue_doc.get("pincode"): issue_doc["pincode"] = geo.get("pincode", "")
-                    if not issue_doc.get("city"):    issue_doc["city"] = geo.get("city", "")
-                    if not issue_doc.get("district"): issue_doc["district"] = geo.get("state", "") # state/district fallback
-                    if not issue_doc.get("state"):    issue_doc["state"] = geo.get("state", "")
-                    
-                    # Update the 'area' alias
-                    issue_doc["area"] = issue_doc["district"] or issue_doc["state"] or ""
-            except Exception as e:
-                logger.warning(f"Optional reverse geocoding failed: {e}")
-        else:
-            # Using reporter fallback - keep the paper text exactly as is
-            logger.info(f"Using reporter fallback location for {surid}, keeping paper address text.")
-
-        # Insert the issue FIRST so we get a real MongoDB _id to use in notifications
-        result = issues_collection.insert_one(issue_doc)
-        inserted_ids.append(surid)
-        real_issue_id_str = str(result.inserted_id)
+                geo = await reverse_geocode(lat, lng)
+                pincode = pincode or geo.get("pincode", "")
+                city = geo.get("city", "")
+                area = area or geo.get("area", "")
+            except Exception:
+                pass
+        
+        issue_doc["pincode"] = pincode
+        issue_doc["city"] = city
+        issue_doc["area"] = area # Map uses this for display
 
         # Notify nearby volunteers based on urgency
         urgency = survey.get("scale of urgency", 5)
-        if isinstance(urgency, (int, float)):
-            radius_km = get_radius_km_for_urgency(int(urgency))
-            radius_meters = radius_km * 1000
-
+        if isinstance(urgency, (int, float, str)):
             try:
+                urgency_int = int(urgency)
+                radius_km = get_radius_km_for_urgency(urgency_int)
+                radius_meters = radius_km * 1000
+
                 nearby_volunteers = list(
                     volunteer_collection.find(
                         {
                             "location": {
                                 "$nearSphere": {
-                                    "$geometry": reporter_location,
+                                    "$geometry": issue_doc["location"],
                                     "$maxDistance": radius_meters,
                                 }
                             },
@@ -303,6 +310,7 @@ async def upload_surveys_to_db(
                             "created_at": datetime.now(timezone.utc).isoformat(),
                         }
                     )
+                )
 
                 if notification_docs:
                     notifications_collection.insert_many(notification_docs)

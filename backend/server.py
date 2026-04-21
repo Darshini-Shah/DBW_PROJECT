@@ -8,7 +8,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
-from fastapi import FastAPI, HTTPException, Depends, status, UploadFile, File
+from fastapi import FastAPI, HTTPException, Depends, status, UploadFile, File, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, EmailStr, Field
@@ -234,6 +234,61 @@ fastmail = FastMail(mail_conf)
 
 def generate_otp(length=6):
     return ''.join(random.choices(string.digits, k=length))
+
+async def send_urgent_issue_email(issue_doc: dict):
+    try:
+        urgency = issue_doc.get("scale of urgency", 1)
+        if urgency <= 7:
+            return
+        
+        # Get all volunteers
+        volunteers = list(volunteer_collection.find({}, {"email": 1}))
+        if not volunteers:
+            # Fallback to users_collection where role=volunteer
+            volunteers = list(users_collection.find({"role": "volunteer"}, {"email": 1}))
+            
+        emails = [v["email"] for v in volunteers if "email" in v]
+        if not emails:
+            logger.info("No volunteers found to email for urgent issue.")
+            return
+
+        category = issue_doc.get("type of issue", "Issue")
+        location = issue_doc.get("geographical area", "Unknown Location")
+        if not location and issue_doc.get("city"):
+            location = issue_doc.get("city")
+            
+        subject = f"URGENT: New {category} in {location}"
+        dashboard_link = "http://localhost:5173/volunteer"
+        
+        html = f"""
+        <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #eee; max-width: 600px; margin: 0 auto;">
+            <h2 style="color: #d9534f;">Urgent Issue Reported</h2>
+            <p>A new <strong>{category}</strong> issue with high urgency (Level {urgency}) has been reported.</p>
+            <p><strong>Location:</strong> {location}</p>
+            <p><strong>Description:</strong> {issue_doc.get("what is the issue", "No description provided.")}</p>
+            <p>Please check your dashboard to accept the task and provide immediate assistance.</p>
+            <div style="text-align: center; margin-top: 30px;">
+                <a href="{dashboard_link}" style="background-color: #0275d8; color: white; padding: 12px 20px; text-decoration: none; border-radius: 5px; font-weight: bold;">Go to Dashboard</a>
+            </div>
+        </div>
+        """
+        
+        # FastMail expects recipients to be a list, if many we might hit limits or need to bcc, but for now we'll just send
+        message = MessageSchema(
+            subject=subject,
+            recipients=emails,  # sends to all
+            body=html,
+            subtype=MessageType.html
+        )
+        
+        if mail_conf.MAIL_USERNAME != "dummy@gmail.com":
+            await fastmail.send_message(message)
+            logger.info(f"Urgent issue email sent to {len(emails)} volunteers.")
+        else:
+            logger.info(f"Urgent issue email generated and logged (Check server logs). Recipients: {len(emails)}")
+    except Exception as e:
+        logger.error(f"Failed to send urgent issue email: {e}")
+
 
 # ── OTP Endpoints ──────────────────────────────────────────────────────────────
 
@@ -573,9 +628,99 @@ async def get_issues(
         return {"issues": issues, "count": len(issues)}
 
 
+@app.get("/api/heatmap-data")
+async def get_heatmap_data():
+    """Returns coordinates and importance scores for the heat map."""
+    try:
+        heatmap_points = []
+        
+        # 1. Fetch from issues collection
+        issues = list(issues_collection.find({}))
+        for issue in issues:
+            lat, lng = None, None
+            
+            # Try GeoJSON
+            loc = issue.get("location")
+            if loc and isinstance(loc, dict) and loc.get("type") == "Point":
+                coords = loc.get("coordinates")
+                if coords and len(coords) >= 2:
+                    lng, lat = coords[0], coords[1]
+            
+            # Try top-level lat/lng
+            if lat is None or lng is None:
+                lat = issue.get("lat") or issue.get("latitude")
+                lng = issue.get("lng") or issue.get("longitude")
+            
+            # Try nested coordinates
+            if (lat is None or lng is None) and "coordinates" in issue:
+                c = issue["coordinates"]
+                if isinstance(c, (list, tuple)) and len(c) >= 2:
+                    lat, lng = c[0], c[1]
+
+            # Check if we already have coordinates from the logic above
+            if lat is not None and lng is not None:
+                pass 
+            elif issue.get("area") or issue.get("city") or issue.get("pincode"):
+                # On-the-fly geocoding fallback for heatmap
+                try:
+                    area = issue.get("area", "")
+                    city = issue.get("city", "")
+                    pincode = issue.get("pincode", "")
+                    
+                    geo = await forward_geocode(city=city, district=area, pincode=pincode)
+                    if geo["success"]:
+                        lat, lng = geo["latitude"], geo["longitude"]
+                        # Store it back in DB to speed up next time
+                        issues_collection.update_one({"_id": issue["_id"]}, {"$set": {"location": {"type": "Point", "coordinates": [lng, lat]}}})
+                except Exception as e:
+                    logger.warning(f"Heatmap: Fallback geocoding failed for {issue.get('_id')}: {e}")
+
+            if lat is not None and lng is not None:
+                try:
+                    lat, lng = float(lat), float(lng)
+                    if lat == 0 and lng == 0: continue
+                    
+                    urgency = issue.get("scale of urgency") or issue.get("urgency") or 5
+                    effect = issue.get("scale of effect") or 5
+                    importance = issue.get("importance")
+                    
+                    if importance is None:
+                        importance = (int(urgency) * 5) + (int(effect) * 5)
+                    
+                    heatmap_points.append({
+                        "lat": lat,
+                        "lng": lng,
+                        "importance": float(importance)
+                    })
+                except:
+                    continue
+        
+        # 2. Fetch from surveys collection (legacy or uploaded raw data)
+        surveys_collection = db["surveys"]
+        surveys = list(surveys_collection.find({}))
+        for doc in surveys:
+            try:
+                lat = doc.get('lat')
+                lng = doc.get('lng')
+                if lat is not None and lng is not None:
+                    heatmap_points.append({
+                        "lat": float(lat),
+                        "lng": float(lng),
+                        "importance": float(doc.get('importance', 50))
+                    })
+            except (ValueError, TypeError):
+                continue
+        
+        logger.info(f"Heatmap data: {len(heatmap_points)} points sent.")
+        return heatmap_points
+    except Exception as e:
+        logger.error(f"Heatmap data error: {e}")
+        return []
+
 @app.post("/api/issues")
 async def create_issue(
     req: IssueCreateRequest,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_current_user),
 ):
     """Field workers submit new community issue reports."""
@@ -666,6 +811,10 @@ async def create_issue(
     if notification_docs:
         notifications_collection.insert_many(notification_docs)
         logger.info(f"Notified {len(notification_docs)} nearby volunteers for {surid}")
+
+    # Trigger background email if urgency > 7
+    if req.urgency > 7:
+        background_tasks.add_task(send_urgent_issue_email, issue_doc)
 
     logger.info(f"Issue {surid} created at {geo['area']}, {geo['city']} (urgency: {req.urgency}, radius: {radius_km}km)")
 
@@ -1002,6 +1151,7 @@ async def get_leaderboard():
 
 @app.post("/api/survey/upload")
 async def upload_survey(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     current_user: dict = Depends(get_current_user),
 ):
@@ -1045,6 +1195,17 @@ async def upload_survey(
             detail=f"Pipeline failed: {result.get('error', 'Unknown error')}"
         )
 
+    # Check the created issues and trigger emails for urgent ones
+    survey_ids = result.get("survey_ids", [])
+    if survey_ids:
+        created_issues = list(issues_collection.find({"surid": {"$in": survey_ids}}))
+        for issue in created_issues:
+            urgency = issue.get("scale of urgency", 1)
+            # Both scale of urgency (1-10) and importance (1-100) are possible depending on parsing
+            # So check if urgency > 7 or urgency > 70
+            if urgency > 7 or urgency > 70:
+                background_tasks.add_task(send_urgent_issue_email, issue)
+
     return {
         "message": f"Survey processed! Found {result['issues_found']} issue(s).",
         "issues_found": result["issues_found"],
@@ -1052,6 +1213,8 @@ async def upload_survey(
         "surveys": result["surveys"],
     }
 
+
+# Consolidated heatmap endpoint above
 
 # ── Entry Point ─────────────────────────────────────────────────────────────────
 
