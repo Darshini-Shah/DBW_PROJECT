@@ -128,10 +128,8 @@ const RegisterVolunteer = ({ onSuccess }) => {
       return;
     }
 
-    // Validation: Must have EITHER GPS or enough typed info
-    const hasTypedInfo = values.neighborhood && values.manualPincode;
-    if (!locationData && !hasTypedInfo) {
-      message.error('Please either auto-detect location or type your neighborhood and pincode!');
+    if (!locationData) {
+      message.error('GPS Location is mandatory! Please click the auto-detect button.');
       return;
     }
 
@@ -145,11 +143,8 @@ const RegisterVolunteer = ({ onSuccess }) => {
         role: 'volunteer',
         fullName: values.fullName,
         phone: values.phoneNumber,
-        latitude: locationData?.latitude || null,
-        longitude: locationData?.longitude || null,
-        typedLandmark: values.neighborhood,
-        typedDistrict: values.district,
-        typedPincode: values.manualPincode,
+        latitude: locationData.latitude,
+        longitude: locationData.longitude,
         skills: values.skills,
         availability: values.availability,
         hasVehicle: values.hasVehicle || false,
@@ -282,44 +277,28 @@ const RegisterVolunteer = ({ onSuccess }) => {
             </Form.Item>
 
             <Form.Item label="Your Location" required>
-              <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: '8px' }}>
-                You can either auto-detect your current GPS or type your location manually.
-              </Text>
-              <Row gutter={8}>
-                <Col flex="auto">
-                  <Form.Item name="neighborhood" noStyle rules={[{ required: true, message: 'Please enter neighborhood/landmark!' }]}>
-                    <Input size="large" placeholder="Neighborhood / Landmark" />
-                  </Form.Item>
-                </Col>
-                <Col>
-                  <Button 
-                    size="large" 
-                    icon={<CompassOutlined />} 
-                    onClick={handleAutoDetectLocation}
-                    loading={isLocating}
-                    type={locationData ? 'primary' : 'default'}
-                  >
-                    {locationData ? 'GPS Detected' : 'Auto-detect GPS'}
-                  </Button>
-                </Col>
-              </Row>
+              <Alert 
+                message="GPS Location Required" 
+                description="We use your precise coordinates to show you nearby tasks. Please click the button below to auto-detect your location."
+                type="info" 
+                showIcon 
+                style={{ marginBottom: '16px', borderRadius: '8px' }}
+              />
+              <Button 
+                size="large" 
+                icon={<CompassOutlined />} 
+                onClick={handleAutoDetectLocation}
+                loading={isLocating}
+                type={locationData ? 'primary' : 'default'}
+                block
+                style={{ height: '50px', fontSize: '16px', fontWeight: 600 }}
+              >
+                {locationData ? '✓ Location Detected' : 'Click to Auto-detect GPS Location'}
+              </Button>
               
-              <Row gutter={16} style={{ marginTop: '16px' }}>
-                <Col span={12}>
-                  <Form.Item name="district" label="District" rules={[{ required: true, message: 'District is required' }]}>
-                    <Input size="large" placeholder="E.g. Wayanad" />
-                  </Form.Item>
-                </Col>
-                <Col span={12}>
-                  <Form.Item name="manualPincode" label="Pincode" rules={[{ required: true, message: 'Pincode is required' }]}>
-                    <Input size="large" placeholder="6-digit Pincode" maxLength={6} />
-                  </Form.Item>
-                </Col>
-              </Row>
-
               {locationData && (
-                <div style={{ marginTop: '8px', padding: '8px 12px', background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: '8px', fontSize: '12px', color: '#389e0d' }}>
-                  <EnvironmentOutlined /> Using GPS for precise coordinates.
+                <div style={{ marginTop: '12px', padding: '12px', background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: '8px', fontSize: '13px', color: '#389e0d' }}>
+                  <EnvironmentOutlined /> <strong>GPS Active:</strong> {locationData.area ? `${locationData.area}, ` : ''}{locationData.city} ({locationData.pincode})
                 </div>
               )}
             </Form.Item>
