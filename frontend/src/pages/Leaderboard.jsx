@@ -1,11 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { Table, Card, Typography, Input, Space, Badge, Avatar } from 'antd';
-import { TrophyOutlined, SearchOutlined, UserOutlined } from '@ant-design/icons';
+import { useNavigate } from 'react-router-dom';
+import { Table, Card, Typography, Input, Space, Badge, Avatar, Button } from 'antd';
+import { TrophyOutlined, SearchOutlined, UserOutlined, ArrowLeftOutlined } from '@ant-design/icons';
 import { getLeaderboard } from '../api';
 
 const { Title, Text } = Typography;
 
 const Leaderboard = () => {
+  const navigate = useNavigate();
+
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchText, setSearchText] = useState('');
@@ -76,6 +79,16 @@ const Leaderboard = () => {
 
   return (
     <div style={{ maxWidth: '800px', margin: '0 auto', padding: '24px 16px' }}>
+      <div style={{ marginBottom: '24px' }}>
+        <Button 
+          type="text" 
+          icon={<ArrowLeftOutlined />} 
+          onClick={() => navigate('/')}
+          style={{ fontSize: '16px', color: '#595959' }}
+        >
+          Back to Dashboard
+        </Button>
+      </div>
       <div style={{ textAlign: 'center', marginBottom: '32px' }}>
         <TrophyOutlined style={{ fontSize: '48px', color: '#ffd700', marginBottom: '16px' }} />
         <Title level={2}>Volunteer Leaderboard</Title>

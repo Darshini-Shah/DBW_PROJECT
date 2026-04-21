@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { MapContainer, TileLayer, useMap } from 'react-leaflet';
 import * as L from 'leaflet';
 import 'leaflet.heat';
-import { Card, Typography } from 'antd';
+import { Card, Typography, Button } from 'antd';
+import { ArrowLeftOutlined } from '@ant-design/icons';
 import 'leaflet/dist/leaflet.css';
 import axios from 'axios';
 
@@ -38,6 +40,7 @@ const HeatmapLayer = ({ points }) => {
 };
 
 const DemandHeatmap = () => {
+  const navigate = useNavigate();
   const [points, setPoints] = useState([]);
 
   useEffect(() => {
@@ -80,6 +83,14 @@ const DemandHeatmap = () => {
         }}
         styles={{ body: { padding: '20px' } }}
       >
+        <Button 
+          type="text" 
+          icon={<ArrowLeftOutlined />} 
+          onClick={() => navigate('/')}
+          style={{ padding: 0, marginBottom: '12px', color: '#8c8c8c' }}
+        >
+          Back to Dashboard
+        </Button>
         <Title level={4} style={{ margin: 0, marginBottom: 8, color: '#1f1f1f' }}>Priority Heatmap</Title>
         <Text style={{ display: 'block', marginBottom: 16, color: '#595959', fontSize: '13px' }}>
           Visualizing demand hotspots based on report importance and density across regions.

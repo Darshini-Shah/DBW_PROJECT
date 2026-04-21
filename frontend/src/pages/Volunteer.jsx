@@ -112,7 +112,7 @@ const Volunteer = ({ user }) => {
         </div>
         <Space>
           <button 
-            className="bg-red-600 text-white p-3 rounded-lg shadow-hover flex items-center gap-2 font-medium border-none cursor-pointer"
+            className="premium-heatmap-btn"
             onClick={() => navigate('/heatmap')}
           >
             <EnvironmentOutlined /> Priority Heatmap

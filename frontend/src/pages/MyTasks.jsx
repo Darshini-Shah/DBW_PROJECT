@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Card, List, Typography, Button, Space, Tag, Modal, InputNumber, message, Divider, Empty, Spin, Alert, Avatar } from 'antd';
-import { CheckCircleOutlined, UserOutlined, ClockCircleOutlined, SettingOutlined, TrophyOutlined, PlayCircleOutlined } from '@ant-design/icons';
+import { CheckCircleOutlined, UserOutlined, ClockCircleOutlined, SettingOutlined, TrophyOutlined, PlayCircleOutlined, ArrowLeftOutlined } from '@ant-design/icons';
 import { getMyTasks, updateVolunteerDays, completeTask, startTask } from '../api';
 
 const { Title, Text } = Typography;
 
 const MyTasks = ({ user }) => {
+  const navigate = useNavigate();
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [managerModalVisible, setManagerModalVisible] = useState(false);
@@ -71,6 +73,16 @@ const MyTasks = ({ user }) => {
 
   return (
     <div style={{ maxWidth: '900px', margin: '0 auto', padding: '24px 16px' }}>
+      <div style={{ marginBottom: '24px' }}>
+        <Button 
+          type="text" 
+          icon={<ArrowLeftOutlined />} 
+          onClick={() => navigate('/')}
+          style={{ fontSize: '16px', color: '#595959' }}
+        >
+          Back to Dashboard
+        </Button>
+      </div>
       <Title level={2}>My Assigned Tasks</Title>
       <Text type="secondary" style={{ display: 'block', marginBottom: '32px' }}>
         Manage your active tasks and coordinate with other volunteers.

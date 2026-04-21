@@ -182,14 +182,12 @@ function App() {
                 </Badge>
               </Dropdown>
 
-              <Button 
-                type="default" 
-                icon={<EnvironmentOutlined />}
+              <button 
+                className="premium-heatmap-btn"
                 onClick={() => navigate('/heatmap')}
-                style={{ fontWeight: 500, borderColor: '#1890ff', color: '#1890ff' }}
               >
-                Demand Map
-              </Button>
+                <EnvironmentOutlined /> Demand Map
+              </button>
 
               <Tag color="geekblue" icon={<UserOutlined />} style={{ padding: '4px 8px', fontSize: '14px', borderRadius: '4px' }}>
                 {user.role === 'field_worker' ? 'Field Worker' : 'Volunteer'}

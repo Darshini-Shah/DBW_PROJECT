@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, Form, Input, Button, Typography, message, Alert, Select } from 'antd';
-import { MailOutlined, LockOutlined, LoginOutlined } from '@ant-design/icons';
+import { MailOutlined, LockOutlined, LoginOutlined, ArrowLeftOutlined } from '@ant-design/icons';
 import { loginUser } from '../api';
 
 const { Title, Text } = Typography;
@@ -71,7 +71,13 @@ const LoginPage = ({ onSuccess }) => {
             <Button type="primary" htmlType="submit" size="large" block icon={<LoginOutlined />} loading={loading}>
               Log In
             </Button>
-            <Button type="link" block onClick={() => navigate('/')} style={{ marginTop: '16px' }}>
+            <Button 
+              type="text" 
+              block 
+              icon={<ArrowLeftOutlined />}
+              onClick={() => navigate('/')} 
+              style={{ marginTop: '16px', color: '#8c8c8c' }}
+            >
               Back
             </Button>
           </Form.Item>

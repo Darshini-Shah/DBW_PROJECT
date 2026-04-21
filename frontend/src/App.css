@@ -42,3 +42,34 @@ body {
 .ant-btn:active {
   transform: scale(0.97);
 }
+
+/* Premium Heatmap Button */
+.premium-heatmap-btn {
+  background: linear-gradient(135deg, #f5222d 0%, #ff4d4f 100%) !important;
+  border: none !important;
+  color: white !important;
+  box-shadow: 0 4px 12px rgba(245, 34, 45, 0.35) !important;
+  transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  font-weight: 600 !important;
+  padding: 8px 18px !important;
+  border-radius: 10px !important;
+  cursor: pointer !important;
+  font-size: 14px;
+}
+
+.premium-heatmap-btn:hover {
+  transform: translateY(-2px) !important;
+  box-shadow: 0 8px 20px rgba(245, 34, 45, 0.45) !important;
+  filter: brightness(1.05);
+}
+
+.premium-heatmap-btn:active {
+  transform: scale(0.95) !important;
+}
+
+.premium-heatmap-btn i, .premium-heatmap-btn .anticon {
+  font-size: 16px;
+}

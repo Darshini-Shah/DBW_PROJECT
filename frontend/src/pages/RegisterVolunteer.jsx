@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, Form, Input, Select, Button, Typography, Row, Col, Checkbox, Space, Alert, Spin, App as AntApp } from 'antd';
-import { HeartOutlined, ArrowRightOutlined, CompassOutlined, EnvironmentOutlined } from '@ant-design/icons';
+import { HeartOutlined, ArrowRightOutlined, CompassOutlined, EnvironmentOutlined, ArrowLeftOutlined } from '@ant-design/icons';
 import { registerUser, sendOTP, verifyOTP } from '../api';
 
 const { Title, Text } = Typography;
@@ -171,6 +171,16 @@ const RegisterVolunteer = ({ onSuccess }) => {
   return (
     <Row justify="center" style={{ padding: '24px 16px' }}>
       <Col xs={24} sm={22} md={18} lg={14} xl={12}>
+        <div style={{ marginBottom: '24px' }}>
+          <Button 
+            type="text" 
+            icon={<ArrowLeftOutlined />} 
+            onClick={() => navigate('/')}
+            style={{ fontSize: '16px', color: '#595959' }}
+          >
+            Back to Role Selection
+          </Button>
+        </div>
         <div style={{ textAlign: 'center', marginBottom: '24px' }}>
           <div style={{ 
             width: '48px', height: '48px', background: '#52c41a', 
