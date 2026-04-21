@@ -48,7 +48,7 @@ const LoginPage = ({ onSuccess }) => {
         </div>
 
         {error && (
-          <Alert message={error} type="error" showIcon style={{ marginBottom: '16px', borderRadius: '8px' }} />
+          <Alert title={error} type="error" showIcon style={{ marginBottom: '16px', borderRadius: '8px' }} />
         )}
 
         <Form name="login_form" layout="vertical" onFinish={onFinish}>

@@ -20,10 +20,12 @@ from dotenv import load_dotenv
 
 from geocoding import reverse_geocode, get_radius_km_for_urgency, forward_geocode
 from pipeline import process_survey_pdf
+from model import enrich_issue
 
 # ── Configuration ───────────────────────────────────────────────────────────────
 
-load_dotenv()
+# Load environment variables from the root directory
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -36,28 +38,39 @@ JWT_EXPIRE_HOURS = 24
 # ── Database Setup ──────────────────────────────────────────────────────────────
 
 client = MongoClient(MONGODB_URI)
-db = client["Dbw_project"]
+# Use environment variable for DB name, defaulting to 'dbw_project'
+# The error "db already exists with different" often occurs due to casing differences (e.g., dbw_project vs DBW_PROJECT)
+DB_NAME = os.getenv("DB_NAME", "dbw_project")
+db = client[DB_NAME]
+
 users_collection = db["users"]
 volunteer_collection = db["volunteer"]
-field_worker_collection = db["field_worker"]
+field_worker_collection = db["field_worker"]  # Fixed typo: feild_worker -> field_worker
 otp_collection = db["otp_registry"]
 issues_collection = db["issues"]
 notifications_collection = db["notifications"]
+assignments_collection = db["assignments"]   # volunteer invites & acceptances
 
 # Create indexes
-users_collection.create_index("email", unique=True)
-users_collection.create_index([("location", GEOSPHERE)])
-volunteer_collection.create_index("email", unique=True)
-volunteer_collection.create_index([("location", GEOSPHERE)])
-field_worker_collection.create_index("email", unique=True)
-field_worker_collection.create_index([("location", GEOSPHERE)])
-otp_collection.create_index("email", unique=True)
-otp_collection.create_index("expires_at", expireAfterSeconds=0)  # TTL index
-issues_collection.create_index([("location", GEOSPHERE)])
-issues_collection.create_index("pincode")
-issues_collection.create_index("status")
-
-logger.info("MongoDB connected and indexes ensured.")
+try:
+    users_collection.create_index("email", unique=True)
+    users_collection.create_index([("location", GEOSPHERE)])
+    volunteer_collection.create_index("email", unique=True)
+    volunteer_collection.create_index([("location", GEOSPHERE)])
+    field_worker_collection.create_index("email", unique=True)
+    field_worker_collection.create_index([("location", GEOSPHERE)])
+    otp_collection.create_index("email", unique=True)
+    otp_collection.create_index("expires_at", expireAfterSeconds=0)  # TTL index
+    issues_collection.create_index([("location", GEOSPHERE)])
+    issues_collection.create_index("pincode")
+    issues_collection.create_index("status")
+    assignments_collection.create_index([("surid", 1), ("volunteer_id", 1)], unique=True, sparse=True)
+    assignments_collection.create_index("volunteer_id")
+    logger.info(f"MongoDB connected to '{DB_NAME}' and indexes ensured.")
+except errors.OperationFailure as e:
+    logger.warning(f"Index creation failed (likely already exists with different options): {e}")
+except Exception as e:
+    logger.error(f"Unexpected database error during index creation: {e}")
 
 # ── Auth Utilities ──────────────────────────────────────────────────────────────
 
@@ -117,8 +130,14 @@ class RegisterRequest(BaseModel):
     role: str  # "volunteer" or "field_worker"
     fullName: str
     phone: str
-    latitude: float
-    longitude: float
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    # Manual location override
+    typedLandmark: Optional[str] = None
+    typedCity: Optional[str] = None
+    typedDistrict: Optional[str] = None
+    typedState: Optional[str] = None
+    typedPincode: Optional[str] = None
     # Volunteer-specific (optional)
     skills: Optional[List[str]] = None
     availability: Optional[List[str]] = None
@@ -153,11 +172,11 @@ class UserResponse(BaseModel):
     role: str
     fullName: str
     phone: str
-    pincode: str
-    city: str
-    area: str
-    latitude: float
-    longitude: float
+    pincode: Optional[str] = ""
+    city: Optional[str] = ""
+    area: Optional[str] = ""
+    latitude: Optional[float] = 0.0
+    longitude: Optional[float] = 0.0
     skills: Optional[List[str]] = None
     availability: Optional[List[str]] = None
     hasVehicle: Optional[bool] = False
@@ -178,7 +197,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=["*"], # Broaden for development to prevent CORS blocks
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -208,7 +227,7 @@ mail_conf = ConnectionConfig(
     MAIL_STARTTLS=True,
     MAIL_SSL_TLS=False,
     USE_CREDENTIALS=True,
-    VALIDATE_CERTS=True
+    VALIDATE_CERTS=False  # Disabled for easier dev setup
 )
 
 fastmail = FastMail(mail_conf)
@@ -308,15 +327,33 @@ async def send_otp(req: OTPRequest):
         # In actual production, you'd await fastmail.send_message(message)
         # For now, we'll log it and skip sending if credentials aren't set
         logger.info(f"OTP for {req.email}: {otp}")
-        if mail_conf.MAIL_USERNAME != "dummy@gmail.com":
+        
+        # Check if we have real credentials (not dummy and not empty)
+        has_real_creds = (
+            mail_conf.MAIL_USERNAME != "dummy@gmail.com" and 
+            mail_conf.MAIL_USERNAME and 
+            mail_conf.MAIL_PASSWORD and 
+            mail_conf.MAIL_PASSWORD != "password"
+        )
+
+        if has_real_creds:
             await fastmail.send_message(message)
             return {"message": "OTP sent successfully"}
         else:
-            return {"message": "OTP generated and logged (Check server logs)", "dev_otp": otp}
+            logger.info("Using DEV MODE for OTP (no real mail credentials found)")
+            return {
+                "message": "OTP generated in DEV MODE (Check server logs)", 
+                "dev_otp": otp,
+                "info": "To send real emails, set MAIL_USERNAME and MAIL_PASSWORD in .env"
+            }
     except Exception as e:
         logger.error(f"Failed to send email: {e}")
-        # Still return success in dev mode if we logged it
-        return {"message": "OTP generated and logged (Check server logs)", "dev_otp": otp}
+        # Return the OTP anyway in the response so the user can continue in dev mode
+        return {
+            "message": "Failed to send email, but OTP is available for dev", 
+            "dev_otp": otp, 
+            "error": str(e)
+        }
 
 @app.post("/auth/verify-otp")
 async def verify_otp(req: OTPVerifyRequest):
@@ -341,8 +378,44 @@ async def register(req: RegisterRequest):
     if target_collection.find_one({"email": req.email}):
         raise HTTPException(status_code=400, detail="Email already registered in this role")
 
-    # Reverse geocode the GPS coordinates
-    geo = await reverse_geocode(req.latitude, req.longitude)
+    # LOCATION LOGIC:
+    # 1. Check if user typed a manual location
+    lat, lng = req.latitude or 0.0, req.longitude or 0.0
+    pincode, city, area, state = "", "", "", ""
+    manual_mode = any([req.typedLandmark, req.typedCity, req.typedDistrict, req.typedState, req.typedPincode])
+    
+    if manual_mode:
+        from geocoding import forward_geocode
+        geo_result = await forward_geocode(
+            req.typedLandmark or "",
+            req.typedCity or "",
+            req.typedDistrict or "",
+            req.typedState or "",
+            req.typedPincode or ""
+        )
+        if geo_result["success"]:
+            lat, lng = geo_result["latitude"], geo_result["longitude"]
+            pincode, city, area, state = geo_result["pincode"], geo_result["city"], geo_result["area"], geo_result["state"]
+            logger.info(f"Volunteer manual location detected: {city}, {state} at [{lng}, {lat}]")
+        else:
+            # If manual geocode fails, check for GPS
+            if req.latitude is not None and req.longitude is not None:
+                logger.warning(f"Manual geocoding failed for {req.email}, falling back to GPS.")
+                geo = await reverse_geocode(req.latitude, req.longitude)
+                pincode, city, area, state = geo["pincode"], geo["city"], geo["area"], geo["state"]
+            else:
+                raise HTTPException(
+                    status_code=400, 
+                    detail="Could not find that location on the map. Please try a more specific address (City, State) or use auto-detect GPS."
+                )
+    else:
+        # 2. Default: Use auto-detected GPS coordinates
+        if req.latitude is None or req.longitude is None:
+            # This should only happen if both manual AND GPS are missing
+            raise HTTPException(status_code=400, detail="Please provide either a typed location or GPS coordinates")
+            
+        geo = await reverse_geocode(req.latitude, req.longitude)
+        pincode, city, area, state = geo["pincode"], geo["city"], geo["area"], geo["state"]
 
     user_doc = {
         "email": req.email,
@@ -352,12 +425,12 @@ async def register(req: RegisterRequest):
         "phone": req.phone,
         "location": {
             "type": "Point",
-            "coordinates": [req.longitude, req.latitude],  # GeoJSON: [lng, lat]
+            "coordinates": [lng, lat],  # GeoJSON: [lng, lat]
         },
-        "pincode": geo["pincode"],
-        "city": geo["city"],
-        "area": geo["area"],
-        "state": geo["state"],
+        "pincode": pincode,
+        "city": city,
+        "area": area, # District/State for volunteers
+        "state": state,
         "skills": req.skills or [],
         "availability": req.availability or [],
         "hasVehicle": req.hasVehicle,
@@ -393,8 +466,8 @@ async def register(req: RegisterRequest):
             "pincode": user_doc["pincode"],
             "city": user_doc["city"],
             "area": user_doc["area"],
-            "latitude": req.latitude,
-            "longitude": req.longitude,
+            "latitude": lat,
+            "longitude": lng,
             "skills": user_doc["skills"],
             "availability": user_doc["availability"],
             "hasVehicle": user_doc["hasVehicle"],
@@ -688,6 +761,17 @@ async def create_issue(
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
 
+    # Enrich the issue with AI-derived fields (req_skillset, estimated_days, max_points)
+    # This is the single Gemini call that adds all missing metadata.
+    try:
+        issue_doc = await enrich_issue(issue_doc)
+        logger.info(
+            f"Issue enriched: skills={issue_doc.get('req_skillset')}, "
+            f"days={issue_doc.get('estimated_days')}, pts={issue_doc.get('max_points')}"
+        )
+    except Exception as e:
+        logger.warning(f"AI enrichment skipped (non-fatal): {e}")
+
     result = issues_collection.insert_one(issue_doc)
     issue_doc["_id"] = str(result.inserted_id)
 
@@ -739,49 +823,93 @@ async def create_issue(
 
 @app.post("/api/issues/{issue_id}/accept")
 async def accept_issue(issue_id: str, current_user: dict = Depends(get_current_user)):
-    """Volunteer accepts/claims an issue."""
+    """
+    Volunteer accepts an issue they were invited to.
+    Rules:
+      - Only `num_vol_needed` volunteers can accept (first-come, first-served).
+      - Once the cap is reached, remaining invitees see "fully staffed".
+      - When cap is met, issue status → "ongoing".
+    """
     if current_user.get("role") != "volunteer":
         raise HTTPException(status_code=403, detail="Only volunteers can accept issues")
 
     try:
-        issue = issues_collection.find_one({"_id": ObjectId(issue_id), "status": "open"})
+        issue = issues_collection.find_one({"_id": ObjectId(issue_id)})
         if not issue:
-            raise HTTPException(status_code=404, detail="Issue not found or no longer open")
+            raise HTTPException(status_code=404, detail="Issue not found")
 
-        assigned_count = len(issue.get("assigned_volunteers", []))
-        needed_count = issue.get("number of volunteer need", 1)
+        if issue.get("status") not in ("open", "pending"):
+            raise HTTPException(status_code=400, detail=f"Issue is already {issue['status']}")
 
-        if any(v["id"] == current_user["_id"] for v in issue.get("assigned_volunteers", [])):
-            raise HTTPException(status_code=400, detail="You have already accepted this issue")
-
-        new_status = "open"
-        if assigned_count + 1 >= needed_count:
-            new_status = "assigned"
-
-        current_points = current_user.get("points", 0)
-
-        result = issues_collection.update_one(
-            {"_id": ObjectId(issue_id), "status": "open"},
-            {
-                "$set": {"status": new_status},
-                "$addToSet": {
-                    "assigned_volunteers": {
-                        "id": current_user["_id"],
-                        "name": current_user["fullName"],
-                        "phone": current_user["phone"],
-                        "points": current_points,
-                        "days_worked": 0,
-                        "accepted_at": datetime.now(timezone.utc).isoformat(),
-                    }
-                },
-            },
+        num_needed = int(
+            issue.get("number of volunteer need")
+            or issue.get("num_vol_needed")
+            or 1
         )
 
-        if result.modified_count == 0:
-            raise HTTPException(status_code=404, detail="Failed to accept task. It may be fully assigned.")
+        vol_id = current_user["_id"]
 
-        logger.info(f"Issue {issue_id} accepted by {current_user['fullName']}")
-        return {"message": "Issue accepted successfully"}
+        # Check if there's an invite record for this volunteer
+        invite = assignments_collection.find_one(
+            {"issue_id": issue_id, "volunteer_id": vol_id}
+        )
+
+        if invite and invite.get("status") == "accepted":
+            raise HTTPException(status_code=400, detail="You have already accepted this issue")
+
+        # Count how many have already accepted
+        accepted_count = assignments_collection.count_documents(
+            {"issue_id": issue_id, "status": "accepted"}
+        )
+
+        if accepted_count >= num_needed:
+            raise HTTPException(
+                status_code=400,
+                detail=f"This issue is already fully staffed ({num_needed}/{num_needed} volunteers)"
+            )
+
+        now = datetime.now(timezone.utc).isoformat()
+
+        if invite:
+            # Update existing invitation to accepted
+            assignments_collection.update_one(
+                {"_id": invite["_id"]},
+                {"$set": {"status": "accepted", "accepted_at": now}}
+            )
+        else:
+            # Volunteer accepted directly (e.g. via app, not through matcher invite)
+            assignments_collection.insert_one({
+                "surid":           issue.get("surid"),
+                "issue_id":        issue_id,
+                "volunteer_id":    vol_id,
+                "volunteer_name":  current_user.get("fullName", ""),
+                "volunteer_email": current_user.get("email", ""),
+                "volunteer_phone": current_user.get("phone", ""),
+                "status":          "accepted",
+                "invited_at":      None,
+                "accepted_at":     now,
+            })
+
+        new_accepted_count = accepted_count + 1
+
+        # If we just hit the cap → mark issue as ongoing
+        if new_accepted_count >= num_needed:
+            issues_collection.update_one(
+                {"_id": ObjectId(issue_id)},
+                {"$set": {"status": "ongoing"}}
+            )
+            logger.info(f"Issue {issue_id} is now fully staffed → status: ongoing")
+
+        logger.info(
+            f"Issue {issue_id} accepted by {current_user['fullName']} "
+            f"({new_accepted_count}/{num_needed})"
+        )
+        return {
+            "message": "Issue accepted successfully",
+            "accepted": new_accepted_count,
+            "needed": num_needed,
+            "fully_staffed": new_accepted_count >= num_needed,
+        }
 
     except HTTPException:
         raise
@@ -792,24 +920,50 @@ async def accept_issue(issue_id: str, current_user: dict = Depends(get_current_u
 
 @app.get("/api/issues/my-tasks")
 async def get_my_tasks(current_user: dict = Depends(get_current_user)):
-    """Fetch issues assigned to the current volunteer."""
+    """Fetch issues the current volunteer has accepted, via the assignments collection."""
     if current_user.get("role") != "volunteer":
         raise HTTPException(status_code=403, detail="Only volunteers have assigned tasks")
-    
-    issues = list(issues_collection.find({
-        "assigned_volunteers.id": current_user["_id"]
-    }).sort("created_at", -1))
 
-    # Add `is_manager` flag
-    for issue in issues:
-        issue["_id"] = str(issue["_id"])
-        
-        assigned_vols = issue.get("assigned_volunteers", [])
-        if assigned_vols:
-            manager = max(assigned_vols, key=lambda x: x.get("points", 0))
-            issue["is_manager"] = manager["id"] == current_user["_id"]
-        else:
-            issue["is_manager"] = False
+    vol_id = current_user["_id"]  # str
+
+    # Build a query that handles volunteer_id stored as string or ObjectId
+    id_variants = [vol_id]
+    try:
+        id_variants.append(ObjectId(vol_id))
+    except Exception:
+        pass
+
+    accepted = list(
+        assignments_collection.find(
+            {"volunteer_id": {"$in": id_variants}, "status": "accepted"}
+        ).sort("accepted_at", -1)
+    )
+
+    if not accepted:
+        return {"issues": []}
+
+    # Collect issue ObjectIds preserving order
+    issue_oids = []
+    for a in accepted:
+        try:
+            issue_oids.append(ObjectId(a["issue_id"]))
+        except Exception:
+            pass
+
+    if not issue_oids:
+        return {"issues": []}
+
+    issues_raw = list(issues_collection.find({"_id": {"$in": issue_oids}}))
+
+    # Preserve accepted order and attach metadata
+    issue_map = {str(i["_id"]): i for i in issues_raw}
+    issues = []
+    for a in accepted:
+        issue = issue_map.get(a["issue_id"])
+        if issue:
+            issue["_id"] = str(issue["_id"])
+            issue["is_manager"] = False  # simplified; manager logic can be added later
+            issues.append(issue)
 
     return {"issues": issues}
 

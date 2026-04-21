@@ -153,6 +153,51 @@ def _empty_result() -> dict:
     }
 
 
+async def forward_geocode(landmark: str, city: str, district: str, state: str, pincode: str) -> dict:
+    """
+    Forward geocodes address components to GPS coordinates with multi-level fallback.
+    """
+    SEARCH_URL = "https://nominatim.openstreetmap.org/search"
+    
+    # Try multiple queries from most specific to least specific
+    queries = [
+        ", ".join([p for p in [landmark, district, state, pincode, "India"] if p]),
+        ", ".join([p for p in [district, state, pincode, "India"] if p]),
+        ", ".join([p for p in [pincode, "India"] if p])
+    ]
+
+    for query in queries:
+        if not query or query == "India": continue
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    SEARCH_URL,
+                    params={"q": query, "format": "json", "limit": 1, "addressdetails": 1},
+                    headers={"User-Agent": "SmartAllocator/1.0"},
+                    timeout=10.0,
+                )
+                response.raise_for_status()
+                results = response.json()
+                
+                if results:
+                    data = results[0]
+                    address = data.get("address", {})
+                    logger.info(f"[FORWARD GEO] Success with query '{query}'")
+                    return {
+                        "latitude": float(data["lat"]),
+                        "longitude": float(data["lon"]),
+                        "pincode": address.get("postcode", pincode),
+                        "city": address.get("city") or address.get("town") or address.get("village") or city,
+                        "area": address.get("suburb") or address.get("neighbourhood") or district or landmark,
+                        "state": address.get("state", state),
+                        "success": True
+                    }
+        except Exception as e:
+            logger.error(f"Forward geocoding attempt failed for '{query}': {e}")
+    
+    return {"success": False}
+
+
 def get_radius_km_for_urgency(urgency: int) -> float:
     """
     Returns search radius in km based on issue urgency (1-10 scale).

@@ -94,7 +94,7 @@ const FieldWorker = ({ user }) => {
 
       {error && (
         <Alert
-          message="Processing Failed"
+          title="Processing Failed"
           description={error}
           type="error"
           showIcon
@@ -167,7 +167,7 @@ const FieldWorker = ({ user }) => {
       {result && (
         <div>
           <Alert
-            message={result.message}
+            title={result.message}
             type="success"
             showIcon
             icon={<CheckCircleFilled />}

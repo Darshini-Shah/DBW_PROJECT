@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Card, Form, Input, Select, Button, Typography, message, Row, Col, Checkbox, Space, Alert, Spin } from 'antd';
+import { Card, Form, Input, Select, Button, Typography, Row, Col, Checkbox, Space, Alert, Spin, App as AntApp } from 'antd';
 import { HeartOutlined, ArrowRightOutlined, CompassOutlined, EnvironmentOutlined } from '@ant-design/icons';
 import { registerUser, sendOTP, verifyOTP } from '../api';
 
@@ -23,6 +23,7 @@ const skillOptions = [
 const daysOfWeek = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
 const RegisterVolunteer = ({ onSuccess }) => {
+  const { message } = AntApp.useApp();
   const navigate = useNavigate();
   const [form] = Form.useForm();
   const [isLocating, setIsLocating] = useState(false);
@@ -122,12 +123,15 @@ const RegisterVolunteer = ({ onSuccess }) => {
   };
 
   const onFinish = async (values) => {
-    if (!locationData) {
-      message.error('Please detect your location first!');
-      return;
-    }
     if (!otpVerified) {
       message.error('Please verify your email with OTP first!');
+      return;
+    }
+
+    // Validation: Must have EITHER GPS or enough typed info
+    const hasTypedInfo = values.neighborhood && values.manualPincode;
+    if (!locationData && !hasTypedInfo) {
+      message.error('Please either auto-detect location or type your neighborhood and pincode!');
       return;
     }
 
@@ -141,10 +145,11 @@ const RegisterVolunteer = ({ onSuccess }) => {
         role: 'volunteer',
         fullName: values.fullName,
         phone: values.phoneNumber,
-        latitude: locationData.latitude,
-        longitude: locationData.longitude,
-        pincode: values.manualPincode,
-        area: values.neighborhood,
+        latitude: locationData?.latitude || null,
+        longitude: locationData?.longitude || null,
+        typedLandmark: values.neighborhood,
+        typedDistrict: values.district,
+        typedPincode: values.manualPincode,
         skills: values.skills,
         availability: values.availability,
         hasVehicle: values.hasVehicle || false,
@@ -183,7 +188,7 @@ const RegisterVolunteer = ({ onSuccess }) => {
           styles={{ body: { padding: '32px' } }}
         >
           {error && (
-            <Alert message={error} type="error" showIcon style={{ marginBottom: '16px', borderRadius: '8px' }} />
+            <Alert title={error} type="error" showIcon style={{ marginBottom: '16px', borderRadius: '8px' }} />
           )}
 
           <Form form={form} layout="vertical" name="register_volunteer" onFinish={onFinish}>
@@ -247,7 +252,7 @@ const RegisterVolunteer = ({ onSuccess }) => {
 
             {otpVerified && (
               <Alert 
-                message="Email Verified" 
+                title="Email Verified" 
                 type="success" 
                 showIcon 
                 style={{ marginBottom: '16px', borderRadius: '8px' }} 
@@ -267,10 +272,13 @@ const RegisterVolunteer = ({ onSuccess }) => {
             </Form.Item>
 
             <Form.Item label="Your Location" required>
+              <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: '8px' }}>
+                You can either auto-detect your current GPS or type your location manually.
+              </Text>
               <Row gutter={8}>
                 <Col flex="auto">
-                  <Form.Item name="neighborhood" noStyle rules={[{ required: true, message: 'Please enter your neighborhood or detect location!' }]}>
-                    <Input size="large" placeholder="Neighborhood / Area Name" />
+                  <Form.Item name="neighborhood" noStyle rules={[{ required: true, message: 'Please enter neighborhood/landmark!' }]}>
+                    <Input size="large" placeholder="Neighborhood / Landmark" />
                   </Form.Item>
                 </Col>
                 <Col>
@@ -279,22 +287,29 @@ const RegisterVolunteer = ({ onSuccess }) => {
                     icon={<CompassOutlined />} 
                     onClick={handleAutoDetectLocation}
                     loading={isLocating}
-                    type={locationData ? 'default' : 'primary'}
-                    ghost={!locationData}
+                    type={locationData ? 'primary' : 'default'}
                   >
-                    {locationData ? '✓ Detected' : 'Auto-detect'}
+                    {locationData ? 'GPS Detected' : 'Auto-detect GPS'}
                   </Button>
                 </Col>
               </Row>
-              <div style={{ marginTop: '16px' }}>
-                <Form.Item name="manualPincode" label="Pincode" rules={[{ required: true, message: 'Pincode is mandatory!' }]}>
-                  <Input size="large" placeholder="6-digit Pincode" maxLength={6} />
-                </Form.Item>
-              </div>
+              
+              <Row gutter={16} style={{ marginTop: '16px' }}>
+                <Col span={12}>
+                  <Form.Item name="district" label="District" rules={[{ required: true, message: 'District is required' }]}>
+                    <Input size="large" placeholder="E.g. Wayanad" />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item name="manualPincode" label="Pincode" rules={[{ required: true, message: 'Pincode is required' }]}>
+                    <Input size="large" placeholder="6-digit Pincode" maxLength={6} />
+                  </Form.Item>
+                </Col>
+              </Row>
+
               {locationData && (
                 <div style={{ marginTop: '8px', padding: '8px 12px', background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: '8px', fontSize: '12px', color: '#389e0d' }}>
-                  <EnvironmentOutlined /> GPS: {locationData.latitude.toFixed(4)}, {locationData.longitude.toFixed(4)}
-                  {locationData.pincode && ` • Pincode: ${locationData.pincode}`}
+                  <EnvironmentOutlined /> Using GPS for precise coordinates.
                 </div>
               )}
             </Form.Item>

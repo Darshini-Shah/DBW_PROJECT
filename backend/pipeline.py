@@ -14,7 +14,8 @@ from typing import List, Dict, Any, Optional
 
 from dotenv import load_dotenv
 
-load_dotenv()
+# Load environment variables from the root directory
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 logger = logging.getLogger(__name__)
 
@@ -29,95 +30,142 @@ STRUCTURED_OUTPUT_DIR = os.path.join(BACKEND_DIR, "data", "structured_output")
 os.makedirs(TEMP_IMAGE_DIR, exist_ok=True)
 
 
-def run_ocr_on_pdf(pdf_path: str) -> str:
+# ── ORIGINAL OCR PATH (COMMENTED OUT TO SAVE RAM) ───────────────────────────
+#
+# def run_ocr_on_pdf(pdf_path: str) -> str:
+#     """
+#     Step 1: Run OCR on a single PDF file using the existing preprocessing logic.
+#     Returns the extracted raw text.
+#     """
+#     import fitz  # PyMuPDF
+#     import easyocr
+#     import numpy as np
+#
+#     reader = easyocr.Reader(["en"], gpu=False)
+#
+#     logger.info(f"OCR: Processing {os.path.basename(pdf_path)}...")
+#
+#     try:
+#         doc = fitz.open(pdf_path)
+#     except Exception as e:
+#         logger.error(f"OCR: Failed to open PDF: {e}")
+#         raise RuntimeError(f"PDF open failed: {e}")
+#
+#     full_text = f"\n\nSOURCE_FILE: {os.path.basename(pdf_path)}\n"
+#
+#     for i in range(len(doc)):
+#         page = doc[i]
+#         pix = page.get_pixmap(dpi=300)
+#         img_array = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.h, pix.w, pix.n)
+#         
+#         if pix.n == 4:
+#             img_array = img_array[:, :, :3]
+#             
+#         results = reader.readtext(img_array, detail=0)
+#         text = " ".join(results)
+#         full_text += f"\n--- Page {i + 1} ---\n{text}"
+#         logger.info(f"OCR: Finished page {i + 1}")
+#
+#     doc.close()
+#     return full_text
+#
+#
+# def run_ai_structuring(raw_text: str) -> List[Dict[str, Any]]:
+#     """
+#     Step 2: Send raw OCR text to Gemini to extract structured survey data.
+#     """
+#     import google.generativeai as genai
+#
+#     genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+#     model = genai.GenerativeModel("gemini-1.5-flash")
+#
+#     prompt = f"..." # (Prompt truncated for brevity in comments)
+#     response = model.generate_content(prompt)
+#     # ... (rest of logic)
+#     return []
+
+
+# ── NEW LIGHTWEIGHT VISION PATH (ACTIVE) ──────────────────────────────────────
+
+def convert_pdf_to_images(pdf_path: str) -> List[Any]:
     """
-    Step 1: Run OCR on a single PDF file using the existing preprocessing logic.
-    Returns the extracted raw text.
+    Converts PDF pages to a list of images for Gemini Vision.
+    Uses PyMuPDF (fitz) which is lightweight.
     """
-    import fitz  # PyMuPDF
-    import easyocr
-    import numpy as np
+    import fitz
+    from PIL import Image
+    import io
 
-    reader = easyocr.Reader(["en"], gpu=False)
-
-    logger.info(f"OCR: Processing {os.path.basename(pdf_path)}...")
-
+    images = []
     try:
         doc = fitz.open(pdf_path)
+        for i in range(len(doc)):
+            page = doc[i]
+            pix = page.get_pixmap(dpi=200) # 200 DPI is enough for AI
+            img_data = pix.tobytes("png")
+            images.append(Image.open(io.BytesIO(img_data)))
+        doc.close()
     except Exception as e:
-        logger.error(f"OCR: Failed to open PDF: {e}")
-        raise RuntimeError(f"PDF open failed: {e}")
-
-    full_text = f"\n\nSOURCE_FILE: {os.path.basename(pdf_path)}\n"
-
-    for i in range(len(doc)):
-        page = doc[i]
-        pix = page.get_pixmap(dpi=300)
-        img_array = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.h, pix.w, pix.n)
-        
-        if pix.n == 4:
-            img_array = img_array[:, :, :3]
-            
-        results = reader.readtext(img_array, detail=0)
-        text = " ".join(results)
-        full_text += f"\n--- Page {i + 1} ---\n{text}"
-        logger.info(f"OCR: Finished page {i + 1}")
-
-    doc.close()
-    return full_text
+        logger.error(f"PDF Conversion failed: {e}")
+        raise RuntimeError(f"Could not convert PDF to images: {e}")
+    
+    return images
 
 
-def run_ai_structuring(raw_text: str) -> List[Dict[str, Any]]:
+async def run_multimodal_extraction(images: List[Any]) -> List[Dict[str, Any]]:
     """
-    Step 2: Send raw OCR text to Gemini to extract structured survey data.
-    Returns a list of structured survey dictionaries.
+    Sends images directly to Gemini to extract structured data.
+    This replaces BOTH the local OCR (EasyOCR) and the separate structuring step.
     """
     import google.generativeai as genai
+    import PIL.Image
 
     genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+    # Use gemini-1.5-flash which is multimodal and very fast
     model = genai.GenerativeModel("gemini-2.5-flash")
 
-    prompt = f"""
-    You are an expert data analyst working for an NGO. 
-    Below is raw text extracted via OCR from multiple hand-filled community survey forms.
+    prompt = """
+You are a data extraction specialist for an NGO disaster-relief platform.
+Below are images of hand-filled community survey forms.
+
+YOUR TASK:
+Identify each individual survey report in the images and extract the fields below into a JSON array.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+FIELDS TO EXTRACT (for each survey):
+1. type_of_issue (Food | Water | Medical | Logistics | Sanitation/Infrastructure | Education | Other)
+2. what_is_the_issue (Concise description)
+3. date (YYYY-MM-DD or null)
+4. landmark (Specific building, school, or landmark like "Govt. Girls Ashram School")
+5. city (Town or City name)
+6. district (District name)
+7. state (State name)
+8. pincode (6-digit PIN code)
+9. num_ppl_affected (Integer or null)
+10. num_vol_needed (Integer or null)
+
+STRICT RULES:
+- Output ONLY a valid JSON array.
+- "area" is not needed in the JSON; use "district" and "state" instead.
+- If text is hard to read, make your best guess or use null.
+"""
+
+    logger.info(f"AI: Processing {len(images)} page(s) with Gemini Vision...")
     
-    TASK:
-    - Identify individual survey reports in the text.
-    - Extract the following fields for each survey:
-      1. date: The date of the report (use YYYY-MM-DD format if possible).
-      2. geographical area: A human-readable description of the location.
-      3. landmark: A specific building or spot mentioned.
-      4. district: The district or region.
-      5. pincode: The 6-digit PIN code.
-      6. type of issue: Category (Food, Water, Medical, etc.).
-      7. number of volunteer need: Integer.
-      8. what is the issue: Short description.
-      9. scale of urgency: 1-10.
-      10. type of volunteer need: Required skills.
-      11. scale of effect: 1-10.
-
-    - If any field is missing, use null.
-    - Format the final output as a VALID JSON LIST of objects.
-
-    RAW TEXT:
-    {raw_text}
-    """
-
-    logger.info("AI: Sending text to Gemini for structuring...")
-    response = model.generate_content(prompt)
-
-    raw_json = response.text.replace("```json", "").replace("```", "").strip()
-
+    # Combine prompt with images
+    content = [prompt] + images
+    
     try:
+        response = model.generate_content(content)
+        raw_json = response.text.replace("```json", "").replace("```", "").strip()
         data = json.loads(raw_json)
         if isinstance(data, dict):
             data = [data]
-        logger.info(f"AI: Extracted {len(data)} survey report(s)")
+        logger.info(f"AI: Successfully extracted {len(data)} survey(s) using Vision")
         return data
-    except json.JSONDecodeError as e:
-        logger.error(f"AI: Failed to parse JSON: {e}")
-        logger.error(f"AI: Raw response: {response.text[:500]}")
-        raise RuntimeError(f"AI structuring failed: could not parse response as JSON")
+    except Exception as e:
+        logger.error(f"AI Multimodal extraction failed: {e}")
+        raise RuntimeError(f"Vision extraction failed: {e}")
 
 
 async def upload_surveys_to_db(
@@ -137,7 +185,8 @@ async def upload_surveys_to_db(
 
     MONGODB_URI = os.getenv("MONGODB_URI")
     client = MongoClient(MONGODB_URI)
-    db = client["Dbw_project"]
+    DB_NAME = os.getenv("DB_NAME", "dbw_project")
+    db = client[DB_NAME]
     issues_collection = db["issues"]
     counters_collection = db["counters"]
     notifications_collection = db["notifications"]
@@ -160,13 +209,21 @@ async def upload_surveys_to_db(
         issue_doc = {
             "surid": surid,
             "date": survey.get("date", datetime.now(timezone.utc).strftime("%Y-%m-%d")),
-            "geographical area": survey.get("geographical area", ""),
-            "type of issue": survey.get("type of issue", "Other"),
-            "number of volunteer need": survey.get("number of volunteer need", 1),
-            "what is the issue": survey.get("what is the issue", ""),
-            "scale of urgency": survey.get("scale of urgency", 5),
-            "type of volunteer need": survey.get("type of volunteer need", "General Labor"),
-            "scale of effect": survey.get("scale of effect", 5),
+            "landmark": survey.get("landmark", ""),
+            "city": survey.get("city", ""),
+            "district": survey.get("district", ""),
+            "state": survey.get("state", ""),
+            "pincode": survey.get("pincode", ""),
+            # "geographical area" is a human-readable summary
+            "geographical area": f"{survey.get('landmark', '')}, {survey.get('city', '')}, {survey.get('district', '')}".strip(", "),
+            "type of issue": survey.get("type_of_issue") or survey.get("type of issue") or "Other",
+            "number of volunteer need": survey.get("number of volunteer need") or survey.get("num_vol_needed") or 1,
+            "what is the issue": survey.get("what_is_the_issue") or survey.get("what is the issue") or "",
+            "scale of urgency": survey.get("scale of urgency") or 5,
+            "req_skillset": survey.get("req_skillset", []),
+            "num_ppl_affected": survey.get("num_ppl_affected"),
+            "estimated_days": survey.get("estimated_days"),
+            "max_points": survey.get("max_points"),
             "status": "open",
             "source": "survey_pdf",
             "reported_by": reporter_id,
@@ -238,29 +295,31 @@ async def upload_surveys_to_db(
 
                 notification_docs = []
                 for vol in nearby_volunteers:
-                    notification_docs.append({
-                        "user_id": str(vol["_id"]),
-                        "issue_id": str(issue_id),
-                        "surid": surid,
-                        "type": "new_issue",
-                        "title": f"New {issue_doc['type of issue']} issue near you!",
-                        "message": f"{issue_doc['what is the issue'][:100]}...",
-                        "urgency": urgency_int,
-                        "area": area,
-                        "city": city,
-                        "read": False,
-                        "created_at": datetime.now(timezone.utc).isoformat(),
-                    })
-                
+                    notification_docs.append(
+                        {
+                            "user_id": str(vol["_id"]),
+                            "issue_id": real_issue_id_str, # Use the actual Mongo _id string!
+                            "surid": surid,
+                            "type": "new_issue",
+                            "title": f"New {issue_doc['type of issue']} issue from survey!",
+                            "message": issue_doc["what is the issue"][:100],
+                            "urgency": urgency,
+                            "area": issue_doc.get("area", ""),
+                            "city": issue_doc.get("city", ""),
+                            "read": False,
+                            "created_at": datetime.now(timezone.utc).isoformat(),
+                        }
+                    )
+                )
+
                 if notification_docs:
                     notifications_collection.insert_many(notification_docs)
-                    logger.info(f"Pipeline: Notified {len(notification_docs)} volunteers for {surid}")
+                    logger.info(
+                        f"Notified {len(notification_docs)} volunteers for {surid}"
+                    )
             except Exception as e:
-                logger.error(f"Pipeline: Notification failed for {surid}: {e}")
+                logger.warning(f"Could not notify volunteers for {surid}: {e}")
 
-        result = issues_collection.insert_one(issue_doc)
-        issue_id = result.inserted_id
-        inserted_ids.append(surid)
         logger.info(f"Uploaded issue {surid}: {issue_doc['type of issue']}")
 
     client.close()
@@ -283,7 +342,8 @@ async def process_survey_pdf(
 
     MONGODB_URI = os.getenv("MONGODB_URI")
     client = MongoClient(MONGODB_URI)
-    db = client["Dbw_project"]
+    DB_NAME = os.getenv("DB_NAME", "dbw_project")
+    db = client[DB_NAME]
     fs = gridfs.GridFS(db)
 
     # Step 0: Create a unique filename and save to GridFS
@@ -311,29 +371,38 @@ async def process_survey_pdf(
         f.write(pdf_bytes)
 
     try:
-        # Step 1: OCR
-        logger.info("Pipeline Step 1/3: Running OCR...")
-        raw_text = run_ocr_on_pdf(temp_pdf_path)
+        # ── OPTION A: NEW VISION PATH (Lightweight, Recommended) ──────────────
+        logger.info("Pipeline: Using Gemini Vision for extraction...")
+        page_images = convert_pdf_to_images(temp_pdf_path)
+        structured_surveys = await run_multimodal_extraction(page_images)
+        text_file_id = fs.put(b"Extracted via Vision", filename=f"vision_{unique_name}.txt")
 
-        if not raw_text.strip():
-            raise RuntimeError("OCR produced no text from the PDF")
+        # ── OPTION B: ORIGINAL OCR PATH (Commented out to save RAM) ───────────
+        # logger.info("Pipeline Step 1/3: Running OCR...")
+        # raw_text = run_ocr_on_pdf(temp_pdf_path)
+        # if not raw_text.strip(): raise RuntimeError("OCR produced no text")
+        # text_file_id = fs.put(raw_text.encode("utf-8"), filename=f"raw_{unique_name}.txt")
+        # logger.info("Pipeline Step 2/3: AI structuring...")
+        # structured_surveys = run_ai_structuring(raw_text)
+        # ──────────────────────────────────────────────────────────────────────
 
-        # Store raw text in GridFS
-        text_file_id = fs.put(
-            raw_text.encode("utf-8"), 
-            filename=f"raw_{unique_name}.txt",
-            content_type="text/plain",
-            metadata={
-                "reporter_id": reporter_id,
-                "type": "raw_extraction",
-                "pdf_id": pdf_file_id
-            }
-        )
-        logger.info(f"GridFS: Saved raw text with ID {text_file_id}")
-
-        # Step 2: AI Structuring
-        logger.info("Pipeline Step 2/3: AI structuring with Gemini...")
-        structured_surveys = run_ai_structuring(raw_text)
+        # Step 2.5: AI Enrichment — fills req_skillset, urgency, estimated_days, max_points
+        # This runs enrich_issue on each survey (one Gemini call per survey).
+        logger.info("Pipeline Step 2.5/3: Enriching surveys with AI metadata...")
+        from model import enrich_issue
+        enriched_surveys = []
+        for survey in structured_surveys:
+            try:
+                enriched = await enrich_issue(survey)
+                enriched_surveys.append(enriched)
+                logger.info(
+                    f"  Enriched survey: type={enriched.get('type_of_issue')}, "
+                    f"urgency={enriched.get('scale of urgency')}, skills={enriched.get('req_skillset')}"
+                )
+            except Exception as e:
+                logger.warning(f"  Enrichment failed for a survey (using raw): {e}")
+                enriched_surveys.append(survey)
+        structured_surveys = enriched_surveys
 
         # Store structured JSON in GridFS
         json_file_id = fs.put(
