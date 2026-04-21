@@ -231,7 +231,7 @@ async def upload_surveys_to_db(
     volunteer_collection = db["volunteer"]
     users_collection = db["users"]
 
-    inserted_ids = []
+    inserted_ids = []  # We will store surid strings here (e.g. "SUR-001")
 
     for survey in surveys:
         # Auto-increment ID
@@ -310,11 +310,16 @@ async def upload_surveys_to_db(
         issue_doc["city"] = city
         issue_doc["area"] = area # Map uses this for display
 
+        # Insert into database
+        result = issues_collection.insert_one(issue_doc)
+        real_issue_id_str = str(result.inserted_id)
+        inserted_ids.append(surid) # Return surid as expected by other parts of backend
+
         # Notify nearby volunteers based on urgency
-        urgency = survey.get("scale of urgency", 5)
+        urgency = survey.get("scale of urgency") or survey.get("urgency") or 5
         if isinstance(urgency, (int, float, str)):
             try:
-                urgency_int = int(urgency)
+                urgency_int = int(float(urgency))
                 radius_km = get_radius_km_for_urgency(urgency_int)
                 radius_meters = radius_km * 1000
 
@@ -336,7 +341,7 @@ async def upload_surveys_to_db(
                     notification_docs.append(
                         {
                             "user_id": str(vol["_id"]),
-                            "issue_id": real_issue_id_str, # Use the actual Mongo _id string!
+                            "issue_id": real_issue_id_str, 
                             "surid": surid,
                             "type": "new_issue",
                             "title": f"New {issue_doc['type of issue']} issue from survey!",
@@ -460,17 +465,21 @@ async def process_survey_pdf(
             structured_surveys, reporter_id, reporter_name, reporter_location
         )
         
-        # Link the files to the survey IDs if needed (optional)
-        db["issues"].update_many(
-            {"surid": {"$in": survey_ids}},
-            {"$set": {
-                "gridfs_files": {
-                    "pdf_id": str(pdf_file_id),
-                    "raw_text_id": str(text_file_id),
-                    "structured_json_id": str(json_file_id)
-                }
-            }}
-        )
+        # Link the files to the survey IDs
+        if survey_ids:
+            logger.info(f"Linking GridFS files to {len(survey_ids)} issues...")
+            db["issues"].update_many(
+                {"surid": {"$in": survey_ids}},
+                {"$set": {
+                    "gridfs_files": {
+                        "pdf_id": str(pdf_file_id),
+                        "raw_text_id": str(text_file_id),
+                        "structured_json_id": str(json_file_id)
+                    }
+                }}
+            )
+        else:
+            logger.warning("No survey IDs returned from upload_surveys_to_db")
 
         return {
             "success": True,
