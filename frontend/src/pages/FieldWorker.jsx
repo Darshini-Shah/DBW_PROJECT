@@ -186,8 +186,12 @@ const FieldWorker = ({ user }) => {
             <List
               dataSource={result.surveys || []}
               renderItem={(survey, index) => {
-                const urgency = survey['scale of urgency'] || 5;
-                const urgencyColor = urgencyColors[urgency] || '#faad14';
+                const urgency = survey['scale of urgency'] || survey.urgency || survey.importance || 5;
+                const urgencyColor = urgencyColors[Math.min(10, Math.floor(urgency))] || '#faad14';
+                const typeOfIssue = survey['type of issue'] || survey.type_of_issue || 'General';
+                const issueDescription = survey['what is the issue'] || survey.what_is_the_issue || survey.description || 'No description';
+                const location = survey['geographical area'] || survey.location_text || survey.landmark || survey.area || 'Nearby';
+                const volNeeded = survey['number of volunteer need'] || survey.num_vol_needed || survey.volunteers || 1;
 
                 return (
                   <List.Item style={{ padding: '16px 0' }}>
@@ -195,7 +199,7 @@ const FieldWorker = ({ user }) => {
                       title={
                         <Space size="middle" wrap>
                           <Tag color="blue">{result.survey_ids?.[index] || `Issue ${index + 1}`}</Tag>
-                          <span style={{ fontWeight: 600 }}>{survey['type of issue'] || 'Unknown'}</span>
+                          <span style={{ fontWeight: 600 }}>{typeOfIssue}</span>
                           <Tag color={urgencyColor === '#52c41a' ? 'green' : urgencyColor === '#faad14' ? 'gold' : 'red'}>
                             Urgency: {urgency}/10
                           </Tag>
@@ -203,20 +207,13 @@ const FieldWorker = ({ user }) => {
                       }
                       description={
                         <div style={{ marginTop: '8px' }}>
-                          <div style={{ color: '#595959', marginBottom: '6px' }}>
-                            {survey['what is the issue'] || 'No description'}
+                          <div style={{ color: '#595959', marginBottom: '6px', fontSize: '14px', fontWeight: 500 }}>
+                            {issueDescription}
                           </div>
-                          <Space size="middle" style={{ fontSize: '12px', color: '#8c8c8c' }} wrap>
-                            {survey['geographical area'] && (
-                              <span><EnvironmentOutlined /> {survey['geographical area']}</span>
-                            )}
-                            {survey['number of volunteer need'] && (
-                              <span>👥 {survey['number of volunteer need']} volunteer(s) needed</span>
-                            )}
-                            {survey['type of volunteer need'] && (
-                              <span>🔧 {survey['type of volunteer need']}</span>
-                            )}
-                            {survey.date && <span>📅 {survey.date}</span>}
+                          <Space size="middle" style={{ fontSize: '13px', color: '#8c8c8c' }} wrap>
+                            <span><EnvironmentOutlined /> <strong>Location:</strong> {location}</span>
+                            <span>👥 <strong>Need:</strong> {volNeeded} volunteer(s)</span>
+                            {survey.date && <span>📅 <strong>Date:</strong> {survey.date}</span>}
                           </Space>
                         </div>
                       }

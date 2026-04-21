@@ -23,11 +23,9 @@ const HeatmapLayer = ({ points }) => {
       max: 1.0,
       minOpacity: 0.5,
       gradient: {
-        0.1: '#0000ff', // Blue
-        0.3: '#00ffff', // Cyan
-        0.5: '#00ff00', // Green
-        0.7: '#ffff00', // Yellow
-        1.0: '#ff0000'  // Red
+        0.4: '#39FF14', // Neon Green (Low)
+        0.7: '#FAFF00', // Neon Yellow (Medium)
+        1.0: '#FF5F1F'  // Neon Orange (High)
       }
     }).addTo(map);
 
@@ -91,16 +89,16 @@ const DemandHeatmap = () => {
         <div style={{ background: '#f5f5f5', padding: '12px', borderRadius: '8px' }}>
           <Text strong style={{ fontSize: 12, display: 'block', marginBottom: 8, textTransform: 'uppercase', color: '#8c8c8c' }}>Legend</Text>
           <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
-            <div style={{ width: 12, height: 12, backgroundColor: 'red', borderRadius: '50%', marginRight: 12, boxShadow: '0 0 4px rgba(255,0,0,0.5)' }}></div>
-            <Text style={{ fontSize: '13px', color: '#262626' }}>High Priority / Density</Text>
+            <div style={{ width: 12, height: 12, backgroundColor: '#FF5F1F', borderRadius: '50%', marginRight: 12, boxShadow: '0 0 8px rgba(255,95,31,0.6)' }}></div>
+            <Text style={{ fontSize: '13px', color: '#262626' }}>High Priority (Neon Orange)</Text>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
-            <div style={{ width: 12, height: 12, backgroundColor: 'yellow', borderRadius: '50%', marginRight: 12 }}></div>
-            <Text style={{ fontSize: '13px', color: '#262626' }}>Moderate Priority</Text>
+            <div style={{ width: 12, height: 12, backgroundColor: '#FAFF00', borderRadius: '50%', marginRight: 12, boxShadow: '0 0 8px rgba(250,255,0,0.6)' }}></div>
+            <Text style={{ fontSize: '13px', color: '#262626' }}>Medium Priority (Neon Yellow)</Text>
           </div>
           <div style={{ display: 'flex', alignItems: 'center' }}>
-            <div style={{ width: 12, height: 12, backgroundColor: 'blue', borderRadius: '50%', marginRight: 12 }}></div>
-            <Text style={{ fontSize: '13px', color: '#262626' }}>Low Priority Zone</Text>
+            <div style={{ width: 12, height: 12, backgroundColor: '#39FF14', borderRadius: '50%', marginRight: 12, boxShadow: '0 0 8px rgba(57,255,20,0.6)' }}></div>
+            <Text style={{ fontSize: '13px', color: '#262626' }}>Low Priority (Neon Green)</Text>
           </div>
         </div>
       </Card>

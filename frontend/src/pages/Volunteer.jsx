@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { List, Card, Typography, Badge, Button, Space, Empty, Spin, message, Tag, Slider, Tooltip } from 'antd';
-import { CheckCircleOutlined, ReloadOutlined, EnvironmentOutlined, ClockCircleOutlined, FilterOutlined, TrophyOutlined, CarryOutOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, CheckCircleOutlined, ReloadOutlined, EnvironmentOutlined, ClockCircleOutlined, FilterOutlined, TrophyOutlined, CarryOutOutlined } from '@ant-design/icons';
 import { getIssues, acceptIssue } from '../api';
 import { useNavigate } from 'react-router-dom';
 import { ToastContainer, toast } from 'react-toastify';
@@ -96,11 +96,19 @@ const Volunteer = ({ user }) => {
     <div style={{ maxWidth: '800px', margin: '0 auto' }}>
       <ToastContainer />
       <div style={{ marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
-        <div>
-          <Title level={2} style={{ margin: 0 }}>Nearby Issues</Title>
-          <Text style={{ color: '#8c8c8c' }}>
-            <EnvironmentOutlined /> Showing tasks within {radiusKm}km of {user?.area || user?.city || 'your location'}
-          </Text>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <Button 
+            icon={<ArrowLeftOutlined />} 
+            onClick={() => navigate(-1)} 
+            shape="circle" 
+            style={{ border: 'none', background: '#f0f0f0' }}
+          />
+          <div>
+            <Title level={2} style={{ margin: 0 }}>Nearby Issues</Title>
+            <Text style={{ color: '#8c8c8c' }}>
+              <EnvironmentOutlined /> Showing tasks within {radiusKm}km of {user?.area || user?.city || 'your location'}
+            </Text>
+          </div>
         </div>
         <Space>
           <button 
