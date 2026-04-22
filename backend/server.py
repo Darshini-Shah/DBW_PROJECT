@@ -455,7 +455,7 @@ async def register(req: RegisterRequest):
     user_doc["latitude"] = req.latitude
     user_doc["longitude"] = req.longitude
 
-    logger.info(f"Registered {req.role}: {req.email} at {geo['area']}, {geo['city']} ({geo['pincode']})")
+    logger.info(f"Registered {req.role}: {req.email} at {area}, {city} ({pincode})")
 
     return {
         "token": token,

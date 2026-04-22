@@ -12,73 +12,7 @@ NOMINATIM_URL = "https://nominatim.openstreetmap.org/reverse"
 NOMINATIM_SEARCH_URL = "https://nominatim.openstreetmap.org/search"
 
 
-async def forward_geocode(landmark: str = "", city: str = "", district: str = "", state: str = "", pincode: str = "") -> dict:
-    """
-    Converts address components to GPS coordinates using structured search.
-    """
-    params = {
-        "format": "json",
-        "limit": 1,
-        "addressdetails": 1,
-    }
-    
-    # Use structured parameters for better accuracy
-    if pincode:
-        params["postalcode"] = pincode
-    if city:
-        params["city"] = city
-    if district:
-        # Many Indian districts match 'county' in Nominatim
-        params["county"] = district
-    if state:
-        params["state"] = state
-    
-    query_parts = [p for p in [landmark, district, city, state, pincode] if p]
-    query = ", ".join(query_parts)
 
-    try:
-        async with httpx.AsyncClient() as client:
-            # Try structured first if we have enough info
-            if pincode or city or district or state:
-                response = await client.get(NOMINATIM_SEARCH_URL, params=params, headers={"User-Agent": "SmartAllocator/1.0"}, timeout=10.0)
-                response.raise_for_status()
-                data = response.json()
-            else:
-                data = []
-            
-            # If structured fails or is too sparse, try general query
-            if not data:
-                response = await client.get(NOMINATIM_SEARCH_URL, params={"q": query, "format": "json", "limit": 1, "addressdetails": 1}, headers={"User-Agent": "SmartAllocator/1.0"}, timeout=10.0)
-                data = response.json()
-
-        if not data:
-            logger.warning(f"Geocoding: No results found for {params} or {query}")
-            return {"success": False}
-
-        best_match = data[0]
-        address = best_match.get("address", {})
-        
-        # Check if the result is actually in the expected state if provided (loose match)
-        res_state = (address.get("state") or "").lower()
-        req_state = (state or "").lower()
-        if req_state and res_state and req_state not in res_state:
-            # If there's a clear state mismatch, it's likely a wrong geocode (e.g. Patna vs Kerala)
-            # But only reject if both are explicitly present
-            logger.warning(f"Geocoding: State mismatch. Expected {req_state}, got {res_state}. Ignoring result.")
-            return {"success": False}
-
-        return {
-            "success": True,
-            "latitude": float(best_match["lat"]),
-            "longitude": float(best_match["lon"]),
-            "pincode": address.get("postcode") or pincode,
-            "city": address.get("city") or address.get("town") or address.get("village") or "",
-            "area": address.get("suburb") or address.get("neighbourhood") or "",
-            "state": address.get("state", ""),
-        }
-    except Exception as e:
-        logger.error(f"Forward geocoding error: {e}")
-        return {"success": False}
 
 
 async def reverse_geocode(latitude: float, longitude: float) -> dict:
@@ -157,8 +91,6 @@ async def forward_geocode(landmark: str, city: str, district: str, state: str, p
     """
     Forward geocodes address components to GPS coordinates with multi-level fallback.
     """
-    SEARCH_URL = "https://nominatim.openstreetmap.org/search"
-    
     # Try multiple queries from most specific to least specific
     queries = [
         ", ".join([p for p in [landmark, district, state, pincode, "India"] if p]),
@@ -171,7 +103,7 @@ async def forward_geocode(landmark: str, city: str, district: str, state: str, p
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.get(
-                    SEARCH_URL,
+                    NOMINATIM_SEARCH_URL,
                     params={"q": query, "format": "json", "limit": 1, "addressdetails": 1},
                     headers={"User-Agent": "SmartAllocator/1.0"},
                     timeout=10.0,
