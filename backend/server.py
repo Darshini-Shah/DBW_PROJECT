@@ -1107,6 +1107,31 @@ async def update_volunteer_days(issue_id: str, req: UpdateDaysRequest, current_u
     if issue.get("status") == "completed":
         raise HTTPException(status_code=400, detail="Task is already completed")
 
+    start_date_str = issue.get("start_date")
+    if not start_date_str:
+        raise HTTPException(status_code=400, detail="Task has not been started yet")
+
+    try:
+        start_date = datetime.fromisoformat(start_date_str.replace("Z", "+00:00"))
+    except ValueError:
+        raise HTTPException(status_code=500, detail="Invalid start date format")
+
+    today = datetime.now(timezone.utc)
+    max_allowed_days = (today.date() - start_date.date()).days + 1
+
+    target_vol = next((v for v in assigned_vols if v["id"] == req.volunteer_id), None)
+    if not target_vol:
+        raise HTTPException(status_code=400, detail="Volunteer not found in this issue")
+
+    current_days = target_vol.get("days_worked", 0)
+    proposed_days = current_days + req.days
+
+    if proposed_days > max_allowed_days:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Cannot add {req.days} days. Max allowed total is {max_allowed_days} (currently at {current_days})."
+        )
+
     # Update the specific volunteer's days_worked in the array
     result = issues_collection.update_one(
         {"_id": ObjectId(issue_id), "assigned_volunteers.id": req.volunteer_id},

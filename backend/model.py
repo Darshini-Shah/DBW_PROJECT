@@ -142,9 +142,9 @@ FIELDS TO RETURN (JSON object):
    - If it was given, just return that same number.
 
 5. "req_skillset"
-   JSON array of skills needed. Pick ONLY from this exact list:
+   JSON array of skills needed. Pick ONLY from this exact list your output must omly be from here nothing else:
    {skills_list}
-   Return at least 1 skill. Return [] if truly none apply.
+   Return at least 1 skill. Return [] if truly none apply, only words from this list will be considered.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 RESPOND WITH ONLY A VALID JSON OBJECT. No explanation, no markdown fences.
