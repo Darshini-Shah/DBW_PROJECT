@@ -138,6 +138,12 @@ class RegisterRequest(BaseModel):
     phone: str
     latitude: float
     longitude: float
+    # Optional address overrides
+    street: Optional[str] = None
+    area: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    pincode: Optional[str] = None
     # Volunteer-specific (optional)
     skills: Optional[List[str]] = None
     availability: Optional[List[str]] = None
@@ -175,6 +181,7 @@ class UserResponse(BaseModel):
     pincode: Optional[str] = ""
     city: Optional[str] = ""
     area: Optional[str] = ""
+    street: Optional[str] = ""
     latitude: Optional[float] = 0.0
     longitude: Optional[float] = 0.0
     skills: Optional[List[str]] = None
@@ -384,11 +391,19 @@ async def register(req: RegisterRequest):
     # Use reverse geocoding to fill in details like pincode, city, etc.
     try:
         geo = await reverse_geocode(lat, lng)
-        pincode, city, area, state = geo["pincode"], geo["city"], geo["area"], geo["state"]
+        pincode = req.pincode or geo["pincode"]
+        city = req.city or geo["city"]
+        area = req.area or geo["area"]
+        state = req.state or geo["state"]
+        street = req.street or geo.get("street", "")
     except Exception as e:
         logger.warning(f"Reverse geocode failed for {req.email}: {e}")
         # Default fallbacks if reverse geocoding fails but we have GPS
-        pincode, city, area, state = "000000", "Unknown", "Unknown", "Unknown"
+        pincode = req.pincode or "000000"
+        city = req.city or "Unknown"
+        area = req.area or "Unknown"
+        state = req.state or "Unknown"
+        street = req.street or ""
 
     user_doc = {
         "email": req.email,
@@ -402,8 +417,9 @@ async def register(req: RegisterRequest):
         },
         "pincode": pincode,
         "city": city,
-        "area": area, # District/State for volunteers
+        "area": area, 
         "state": state,
+        "street": street,
         "skills": req.skills or [],
         "availability": req.availability or [],
         "hasVehicle": req.hasVehicle,
@@ -569,25 +585,26 @@ async def get_issues(
         if current_user.get("role") == "volunteer":
             filtered_issues = []
             user_skills = [s.lower() for s in current_user.get("skills", [])]
-            user_area = current_user.get("area", "").lower()
-            user_city = current_user.get("city", "").lower()
 
             for issue in issues:
-                issue_category = issue.get("type of issue", "").lower()
-                issue_area = issue.get("geographical area", "").lower()
+                issue_category = (issue.get("type of issue") or issue.get("type_of_issue") or "").lower()
+                issue_req_skills = [s.lower() for s in issue.get("req_skillset", [])]
                 
-                # Check for skill match
-                skill_match = any(user_skill in issue_category or issue_category in user_skill for user_skill in user_skills)
+                # 1. Primary Skill Match: Check intersection between user skills and required skillset
+                skill_match = False
+                if issue_req_skills:
+                    if set(user_skills) & set(issue_req_skills):
+                        skill_match = True
                 
-                # Check for area match (city or specific area)
-                area_match = (user_area and user_area in issue_area) or \
-                             (user_city and user_city in issue_area) or \
-                             (issue_area and issue_area in user_area)
-
-                # Volunteer sees it if it matches skills OR location (as fallback, or both)
-                # Following matcher.py's spirit: Location match is often enough, but Skills prioritize.
-                if skill_match or area_match:
-                    filtered_issues.append(serialize_mongo_doc(issue))
+                # 2. Secondary Skill Match: Check if any user skill matches the issue category/type
+                if not skill_match and issue_category:
+                    skill_match = any(user_skill in issue_category or issue_category in user_skill for user_skill in user_skills)
+                
+                # 3. Filtering: Only show skill-matched issues to the volunteer
+                if skill_match:
+                    issue_doc = serialize_mongo_doc(issue)
+                    issue_doc["skill_match"] = True
+                    filtered_issues.append(issue_doc)
             
             return {"issues": filtered_issues, "count": len(filtered_issues)}
 

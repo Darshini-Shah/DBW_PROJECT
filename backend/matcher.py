@@ -137,14 +137,27 @@ class VolunteerMatcher:
                 ]
             logger.warning(f"Issue {issue.get('surid')} has no coordinates — using text fallback.")
 
-        # ── Skill filter (set intersection) ───────────────────────────────────
-        if req_skills:
-            volunteers = [
-                v for v in volunteers
-                if req_skills & set(v.get("skills", []))
-            ]
+        # ── Skill filter (Stricter) ───────────────────────────────────
+        issue_category = (issue.get("type of issue") or "").lower()
+        
+        filtered_volunteers = []
+        for v in volunteers:
+            v_skills = [s.lower() for s in v.get("skills", [])]
+            
+            # 1. Match by specific required skills
+            if req_skills:
+                # req_skills is already a set of strings from line 103
+                issue_req_skills = {s.lower() for s in req_skills}
+                if set(v_skills) & issue_req_skills:
+                    filtered_volunteers.append(v)
+            # 2. Fallback to category string match if no specific req_skillset
+            elif issue_category:
+                if any(v_skill in issue_category or issue_category in v_skill for v_skill in v_skills):
+                    filtered_volunteers.append(v)
+            # 3. If neither can be determined, don't match (prevents cross-skill spam)
+        
+        return filtered_volunteers
 
-        return volunteers
 
     # ── Main matching loop ────────────────────────────────────────────────────
 

@@ -143,9 +143,9 @@ const Volunteer = ({ user }) => {
             style={{ padding: '64px' }}
             description={
               <span>
-                No open issues within {radiusKm}km.
+                No matching issues within {radiusKm}km.
                 <br />
-                <Text type="secondary">Try increasing the search radius.</Text>
+                <Text type="secondary">We prioritize tasks that match your skillset. Try increasing the search radius if you don't see anything.</Text>
               </span>
             }
           />
@@ -183,6 +183,11 @@ const Volunteer = ({ user }) => {
                           count={`Urgency ${urgency}`}
                           style={{ backgroundColor: urgencyColor }}
                         />
+                        {item.skill_match && (
+                          <Tag color="success" icon={<CheckCircleOutlined />} style={{ borderRadius: '4px' }}>
+                            Skill Match
+                          </Tag>
+                        )}
                         {item['geographical area'] && (
                           <Tag icon={<EnvironmentOutlined />} color="blue">
                             {item['geographical area']}
