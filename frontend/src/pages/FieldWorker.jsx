@@ -91,14 +91,6 @@ const FieldWorker = ({ user }) => {
             </Text>
           </div>
         </div>
-        <Space>
-          <button 
-            className="premium-heatmap-btn"
-            onClick={() => navigate('/heatmap')}
-          >
-            <EnvironmentOutlined /> Live Demand Map
-          </button>
-        </Space>
       </div>
 
       {error && (
