@@ -42,16 +42,23 @@ const MyTasks = ({ user }) => {
 
   const handleUpdateDays = async (volunteerId, currentDays) => {
     try {
-      await updateVolunteerDays(selectedTask._id, volunteerId, 1);
-      message.success('Point added for volunteer');
-      // Refresh selected task data locally
-      const updatedVols = selectedTask.assigned_volunteers.map(v => 
-        v.id === volunteerId ? { ...v, days_worked: (v.days_worked || 0) + 1 } : v
+      const res = await updateVolunteerDays(selectedTask._id, volunteerId, 1);
+      // Show remaining budget if server returned it
+      const maxDays = res?.max_allowed_days;
+      const newTotal = res?.days_worked ?? (currentDays + 1);
+      const remaining = maxDays != null ? maxDays - newTotal : null;
+      const suffix = remaining != null ? ` (${remaining} day(s) remaining this task)` : '';
+      message.success(`+1 day recorded for volunteer${suffix}`);
+      // Reflect change locally without waiting for full refetch
+      const updatedVols = selectedTask.assigned_volunteers.map(v =>
+        v.id === volunteerId ? { ...v, days_worked: newTotal } : v
       );
       setSelectedTask({ ...selectedTask, assigned_volunteers: updatedVols });
       fetchTasks(); // Also refresh main list
     } catch (err) {
-      message.error('Failed to update days');
+      // Surface the server's descriptive error (e.g. cap exceeded) when available
+      const detail = err?.response?.data?.detail || 'Failed to update days';
+      message.error(detail);
     }
   };
 

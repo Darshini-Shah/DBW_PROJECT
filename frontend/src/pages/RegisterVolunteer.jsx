@@ -265,7 +265,7 @@ const RegisterVolunteer = ({ onSuccess }) => {
                 </Row>
                 <Row gutter={16}>
                   <Col xs={24} md={12}>
-                    <Form.Item name="area" label="Area / District" rules={[{ required: true, message: 'Area is required' }]}>
+                    <Form.Item name="area" label="Area / District" >
                       <Input placeholder="E.g. Andheri West" />
                     </Form.Item>
                   </Col>

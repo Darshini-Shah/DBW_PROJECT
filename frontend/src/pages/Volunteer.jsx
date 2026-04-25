@@ -28,10 +28,24 @@ const Volunteer = ({ user }) => {
   const navigate = useNavigate();
   const initialLoadDone = React.useRef(false);
 
-  const fetchIssues = useCallback(async (overridingRadius = null) => {
+  // Keep a ref that always mirrors radiusKm so fetchIssues can read the
+  // latest value without needing it as a dependency (which would recreate
+  // the callback — and retrigger the useEffect — on every slider tick).
+  const radiusRef = React.useRef(15);
+  const handleRadiusChange = (val) => {
+    radiusRef.current = val;
+    setRadiusKm(val); // update display only
+  };
+
+  /**
+   * Fetch issues from the backend.
+   * @param {number|null} radiusOverride - Explicit value from onChangeComplete.
+   *   When omitted, reads from radiusRef (always up-to-date).
+   */
+  const fetchIssues = useCallback(async (radiusOverride = null) => {
     setLoading(true);
     try {
-      const activeRadius = overridingRadius !== null ? overridingRadius : radiusKm;
+      const activeRadius = radiusOverride !== null ? radiusOverride : radiusRef.current;
       const params = {
         latitude: user?.latitude,
         longitude: user?.longitude,
@@ -39,34 +53,29 @@ const Volunteer = ({ user }) => {
         status_filter: 'open',
       };
       const data = await getIssues(params);
-      const fetchedIssues = data.issues || [];
-      
-      setIssues(fetchedIssues);
-
-      // Toast notifications removed
+      setIssues(data.issues || []);
       initialLoadDone.current = true;
-      
     } catch (err) {
       console.error('Failed to fetch issues:', err);
       message.error('Failed to load nearby issues');
     } finally {
       setLoading(false);
     }
-  }, [user, radiusKm]);
+  }, [user, message]); // radiusKm intentionally excluded — use radiusRef instead
 
   useEffect(() => {
     fetchIssues();
-    // Auto-refresh every 60s using the latest radius
+    // Auto-refresh every 60 s using the latest radius from radiusRef
     const interval = setInterval(() => fetchIssues(), 60000);
     return () => clearInterval(interval);
-  }, [fetchIssues]); 
+  }, [fetchIssues]);
 
   const handleAccept = async (issueId) => {
     setAccepting(issueId);
     try {
       await acceptIssue(issueId);
       message.success('Task accepted! Thank you for volunteering.');
-      fetchIssues(); // Refresh the list
+      fetchIssues();
     } catch (err) {
       const detail = err.response?.data?.detail || 'Failed to accept task';
       message.error(detail);
@@ -124,8 +133,8 @@ const Volunteer = ({ user }) => {
             min={5}
             max={100}
             value={radiusKm}
-            onChange={setRadiusKm}
-            onChangeComplete={fetchIssues}
+            onChange={handleRadiusChange}
+            onChangeComplete={(committedValue) => fetchIssues(committedValue)}
             marks={{ 5: '5km', 15: '15km', 30: '30km', 60: '60km', 100: '100km' }}
             tooltip={{ formatter: (v) => `${v} km` }}
           />

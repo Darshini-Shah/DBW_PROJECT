@@ -87,6 +87,7 @@ def llm_enrich_fields(
     num_ppl_affected: Optional[int],
     num_vol_needed: Optional[int],
     area: Optional[str],
+    raw_volunteer_need: Optional[str] = None,
 ) -> dict:
     """
     ONE single Gemini call that fills all LLM-derived fields at once:
@@ -98,6 +99,7 @@ def llm_enrich_fields(
 
     Returns a dict with these keys. Any field that fails will be None / [].
     """
+
     import google.generativeai as genai
     genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
     model = genai.GenerativeModel("gemini-2.5-flash")
@@ -117,6 +119,8 @@ INPUT CONTEXT:
   Area                : {area or "unknown"}
   People Affected     : {ppl_context}
   Volunteers Needed   : {vol_context}
+  Volunteer Type (raw): {raw_volunteer_need or "not specified"}
+
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 FIELDS TO RETURN (JSON object):
@@ -141,10 +145,10 @@ FIELDS TO RETURN (JSON object):
    - If "Volunteers Needed" above says NOT STATED, estimate based on context.
    - If it was given, just return that same number.
 
-5. "req_skillset"
-   JSON array of skills needed. Pick ONLY from this exact list:
-   {skills_list}
-   Return at least 1 skill. Return [] if truly none apply.
+    {skills_list}
+    Return at least 1 skill. Return [] if truly none apply.
+    Use the "Volunteer Type (raw)" input as the PRIMARY hint for mapping to the standard skills above.
+
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 RESPOND WITH ONLY A VALID JSON OBJECT. No explanation, no markdown fences.
@@ -246,6 +250,8 @@ async def enrich_issue(issue: dict) -> dict:
     city           = doc.get("city") or None
     pincode        = doc.get("pincode") or None
 
+    raw_vol_need = doc.get("req_skillset") or doc.get("req_skillset") or None
+
     # Decide which fields are already filled (never overwrite what came from PDF)
     need_type    = is_missing(type_of_issue) or len(str(type_of_issue)) > 30
     need_ppl     = is_missing(num_ppl)
@@ -262,7 +268,9 @@ async def enrich_issue(issue: dict) -> dict:
             num_ppl_affected=num_ppl if not need_ppl else None,
             num_vol_needed=num_vol if not need_vol else None,
             area=area,
+            raw_volunteer_need=raw_vol_need,
         )
+
 
     # ── Apply LLM results (only if field was missing) ─────────────────────────
     if need_type and llm_result.get("type_of_issue"):
