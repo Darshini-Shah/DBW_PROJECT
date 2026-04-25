@@ -467,9 +467,11 @@ async def register(req: RegisterRequest):
     user_doc["latitude"] = req.latitude
     user_doc["longitude"] = req.longitude
 
-    logger.info(f"Registered {req.role}: {req.email} at {geo['area']}, {geo['city']} ({geo['pincode']})")
+    loc_str = f"{area}, {city} ({pincode})"
+    logger.info(f"Registered {req.role}: {req.email} at {loc_str}")
 
     return {
+
         "token": token,
         "user": {
             "id": user_doc["_id"],
@@ -1021,15 +1023,11 @@ async def accept_issue(issue_id: str, current_user: dict = Depends(get_current_u
         if invite and invite.get("status") == "accepted":
             raise HTTPException(status_code=400, detail="You have already accepted this issue")
 
-        # Count how many have already accepted
-        accepted_count = assignments_collection.count_documents(
-            {"issue_id": issue_id, "status": "accepted"}
-        )
-
-        if accepted_count >= num_needed:
+        # Check if still needed
+        if num_needed <= 0:
             raise HTTPException(
                 status_code=400,
-                detail=f"This issue is already fully staffed ({num_needed}/{num_needed} volunteers)"
+                detail="This issue is already fully staffed."
             )
 
         now = datetime.now(timezone.utc).isoformat()
@@ -1053,38 +1051,44 @@ async def accept_issue(issue_id: str, current_user: dict = Depends(get_current_u
             upsert=True
         )
 
-        # 2. Add to issue's assigned_volunteers using $addToSet (prevents duplicates)
+        # 2. Add to issue's assigned_volunteers and DECREMENT the need count
         vol_entry = {
             "id": vol_id,
             "name": current_user.get("fullName", ""),
             "points": current_user.get("points", 0),
-            "days_worked": 0
+            "days_worked": 0,
+            "accepted_at": now
         }
-        issues_collection.update_one(
-            {"_id": ObjectId(issue_id)},
-            {"$addToSet": {"assigned_volunteers": vol_entry}}
+        
+        # Atomically update the issue
+        res = issues_collection.find_one_and_update(
+            {"_id": ObjectId(issue_id), "number of volunteer need": {"$gt": 0}},
+            {
+                "$addToSet": {"assigned_volunteers": vol_entry},
+                "$inc": {"number of volunteer need": -1, "num_vol_needed": -1}
+            },
+            return_document=True
         )
 
-        # Calculate new count
-        new_accepted_count = assignments_collection.count_documents(
-            {"issue_id": issue_id, "status": "accepted"}
-        )
+        if not res:
+            # If find_one_and_update failed, it means the count hit 0 between our check and the update
+            raise HTTPException(status_code=400, detail="Issue just became fully staffed.")
 
-        # If we just hit the cap → mark issue as ongoing
-        if new_accepted_count >= num_needed:
+        # 3. If we just hit the cap → mark issue as ongoing
+        if res.get("number of volunteer need", 0) <= 0:
             issues_collection.update_one(
                 {"_id": ObjectId(issue_id)},
                 {"$set": {"status": "ongoing"}}
             )
             logger.info(f"Issue {issue_id} is now fully staffed → status: ongoing")
 
-        logger.info(f"Issue {issue_id} accepted successfully by {current_user['fullName']} ({new_accepted_count}/{num_needed})")
+        logger.info(f"Issue {issue_id} accepted by {current_user['fullName']}. Remaining need: {res.get('number of volunteer need')}")
         return {
             "message": "Issue accepted successfully",
-            "accepted": new_accepted_count,
-            "needed": num_needed,
-            "fully_staffed": new_accepted_count >= num_needed,
+            "remaining_need": res.get("number of volunteer need"),
+            "fully_staffed": res.get("number of volunteer need", 0) <= 0,
         }
+
 
     except HTTPException:
         raise
