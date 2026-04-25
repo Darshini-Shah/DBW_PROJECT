@@ -377,8 +377,19 @@ const RegisterFieldWorker = ({ onSuccess }) => {
 
             <Row gutter={16}>
               <Col xs={24}>
-                <Form.Item name="password" label="Password" rules={[{ required: true, message: 'Please input a password!' }, { min: 6, message: 'Password must be at least 6 characters!' }]}>
-                  <Input.Password size="large" placeholder="At least 6 characters" />
+                <Form.Item 
+                  name="password" 
+                  label="Password" 
+                  rules={[
+                    { required: true, message: 'Please input a password!' },
+                    { min: 8, message: 'Password must be at least 8 characters!' },
+                    { 
+                      pattern: /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/, 
+                      message: 'Password must include uppercase, lowercase, number and special character!' 
+                    }
+                  ]}
+                >
+                  <Input.Password size="large" placeholder="At least 8 characters with mix of types" />
                 </Form.Item>
               </Col>
             </Row>
