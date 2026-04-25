@@ -59,6 +59,16 @@ export const verifyOTP = async (email, otp) => {
   return res.data;
 };
 
+export const sendSMSOTP = async (phone) => {
+  const res = await api.post('/auth/send-sms-otp', { phone });
+  return res.data;
+};
+
+export const verifySMSOTP = async (phone, otp) => {
+  const res = await api.post('/auth/verify-sms-otp', { phone, otp });
+  return res.data;
+};
+
 export const getMe = async () => {
   const res = await api.get('/auth/me');
   return res.data.user;

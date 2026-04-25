@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Card, Form, Input, Select, Button, Typography, Row, Col, Checkbox, Space, Alert, Spin, App as AntApp } from 'antd';
-import { HeartOutlined, ArrowRightOutlined, CompassOutlined, EnvironmentOutlined, ArrowLeftOutlined } from '@ant-design/icons';
-import { registerUser, sendOTP, verifyOTP } from '../api';
+import { Card, Form, Input, Select, Button, Typography, Row, Col, Checkbox, Space, Alert, Spin, Upload, App as AntApp } from 'antd';
+import { HeartOutlined, ArrowRightOutlined, CompassOutlined, EnvironmentOutlined, ArrowLeftOutlined, CheckCircleOutlined, ClockCircleOutlined, IdcardOutlined, UploadOutlined } from '@ant-design/icons';
+import { registerUser, sendOTP, verifyOTP, sendSMSOTP, verifySMSOTP } from '../api';
 import LocationPickerMap from '../components/LocationPickerMap';
 
 const { Title, Text } = Typography;
@@ -22,6 +22,19 @@ const skillOptions = [
 ];
 
 const daysOfWeek = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+const getBase64 = (file) =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = (error) => reject(error);
+  });
+
+const normFile = (e) => {
+  if (Array.isArray(e)) return e;
+  return e?.fileList;
+};
 
 const RegisterVolunteer = ({ onSuccess }) => {
   const { message } = AntApp.useApp();
@@ -48,6 +61,13 @@ const RegisterVolunteer = ({ onSuccess }) => {
   const [otpLoading, setOtpLoading] = useState(false);
   const [verifyingOtp, setVerifyingOtp] = useState(false);
   const [otp, setOtp] = useState('');
+
+  // Phone OTP state
+  const [phoneOtpSent, setPhoneOtpSent] = useState(false);
+  const [phoneOtpVerified, setPhoneOtpVerified] = useState(false);
+  const [phoneOtpLoading, setPhoneOtpLoading] = useState(false);
+  const [phoneVerifyingOtp, setPhoneVerifyingOtp] = useState(false);
+  const [phoneOtp, setPhoneOtp] = useState('');
 
   const handleSendOtp = async () => {
     const email = form.getFieldValue('email');
@@ -86,9 +106,46 @@ const RegisterVolunteer = ({ onSuccess }) => {
     }
   };
 
+  const handleSendPhoneOtp = async () => {
+    const phone = form.getFieldValue('phone');
+    if (!phone) {
+      message.error('Please enter your phone number first!');
+      return;
+    }
+    setPhoneOtpLoading(true);
+    try {
+      const res = await sendSMSOTP(phone);
+      message.success('SMS OTP sent to your phone!');
+      if (res.dev_otp) message.info(`[DEV MODE] SMS OTP: ${res.dev_otp}`, 10);
+      setPhoneOtpSent(true);
+    } catch (err) {
+      message.error(err.response?.data?.detail || 'Failed to send SMS OTP');
+    } finally {
+      setPhoneOtpLoading(false);
+    }
+  };
+
+  const handleVerifyPhoneOtp = async () => {
+    const phone = form.getFieldValue('phone');
+    if (!phoneOtp) {
+      message.error('Please enter the SMS OTP!');
+      return;
+    }
+    setPhoneVerifyingOtp(true);
+    try {
+      await verifySMSOTP(phone, phoneOtp);
+      message.success('Phone verified successfully!');
+      setPhoneOtpVerified(true);
+    } catch (err) {
+      message.error('Invalid SMS OTP. Please try again.');
+    } finally {
+      setPhoneVerifyingOtp(false);
+    }
+  };
+
   const onFinish = async (values) => {
-    if (!otpVerified) {
-      message.error('Please verify your email with OTP first!');
+    if (!otpVerified || !phoneOtpVerified) {
+      message.error('Please verify both Email and Phone with OTP first!');
       return;
     }
 
@@ -101,12 +158,18 @@ const RegisterVolunteer = ({ onSuccess }) => {
     setError(null);
 
     try {
+      let idCardBase64 = null;
+      // Robustly get the file object from Ant Design Upload state
+      const fileList = values.id_card;
+      if (fileList && fileList.length > 0) {
+        idCardBase64 = await getBase64(fileList[0].originFileObj);
+      }
+
       const { user } = await registerUser({
         email: values.email,
         password: values.password,
-        role: 'volunteer',
         fullName: values.fullName,
-        phone: values.phoneNumber,
+        phone: values.phone,
         latitude: locationData.latitude,
         longitude: locationData.longitude,
         street: values.street,
@@ -117,6 +180,8 @@ const RegisterVolunteer = ({ onSuccess }) => {
         skills: values.skills,
         availability: values.availability,
         hasVehicle: values.hasVehicle || false,
+        id_card: idCardBase64,
+        role: 'volunteer',
       });
 
       message.success('Volunteer registered successfully!');
@@ -136,9 +201,9 @@ const RegisterVolunteer = ({ onSuccess }) => {
     <Row justify="center" style={{ padding: '24px 16px' }}>
       <Col xs={24} sm={22} md={18} lg={14} xl={12}>
         <div style={{ marginBottom: '24px' }}>
-          <Button 
-            type="text" 
-            icon={<ArrowLeftOutlined />} 
+          <Button
+            type="text"
+            icon={<ArrowLeftOutlined />}
             onClick={() => navigate('/')}
             style={{ fontSize: '16px', color: '#595959' }}
           >
@@ -146,10 +211,10 @@ const RegisterVolunteer = ({ onSuccess }) => {
           </Button>
         </div>
         <div style={{ textAlign: 'center', marginBottom: '24px' }}>
-          <div style={{ 
-            width: '48px', height: '48px', background: '#52c41a', 
-            borderRadius: '12px', display: 'flex', justifyContent: 'center', 
-            alignItems: 'center', margin: '0 auto 16px auto' 
+          <div style={{
+            width: '48px', height: '48px', background: '#52c41a',
+            borderRadius: '12px', display: 'flex', justifyContent: 'center',
+            alignItems: 'center', margin: '0 auto 16px auto'
           }}>
             <HeartOutlined style={{ color: 'white', fontSize: '24px' }} />
           </div>
@@ -157,7 +222,7 @@ const RegisterVolunteer = ({ onSuccess }) => {
           <Text style={{ color: '#8c8c8c' }}>Join our network and make an impact today.</Text>
         </div>
 
-        <Card 
+        <Card
           style={{ borderRadius: '16px', boxShadow: '0 8px 24px rgba(0,0,0,0.05)' }}
           styles={{ body: { padding: '32px' } }}
         >
@@ -167,74 +232,194 @@ const RegisterVolunteer = ({ onSuccess }) => {
 
           <Form form={form} layout="vertical" name="register_volunteer" onFinish={onFinish}>
             <Row gutter={16}>
-              <Col xs={24} md={12}>
+              <Col xs={24}>
                 <Form.Item name="fullName" label="Full Name" rules={[{ required: true, message: 'Please input your full name!' }]}>
                   <Input size="large" placeholder="E.g. John Smith" />
                 </Form.Item>
               </Col>
-              <Col xs={24} md={12}>
-                <Form.Item name="phoneNumber" label="Phone Number" rules={[{ required: true, message: 'Please input your phone number!' }]}>
-                  <Input size="large" placeholder="+91 98765 43210" />
+            </Row>
+
+            <Row gutter={16}>
+              <Col xs={24}>
+                <Form.Item label="Phone Number" required>
+                  <Form.Item
+                    name="phone"
+                    noStyle
+                    rules={[
+                      { required: true, message: 'Please input your phone number!' },
+                      { pattern: /^(?:\+91)?[6-9]\d{9}$/, message: 'Please enter a valid 10-digit mobile number' }
+                    ]}
+                  >
+                    <Input
+                      size="large"
+                      placeholder="E.g. 7358480256"
+                      disabled={phoneOtpVerified}
+                      prefix={<span style={{ color: '#bfbfbf' }}>+91</span>}
+                      variant="filled"
+                      style={{ borderRadius: '12px' }}
+                      suffix={
+                        !phoneOtpVerified && (
+                          <Button
+                            type="link"
+                            size="small"
+                            onClick={handleSendPhoneOtp}
+                            loading={phoneOtpLoading}
+                            style={{ padding: 0 }}
+                          >
+                            {phoneOtpSent ? 'Resend' : 'Send OTP'}
+                          </Button>
+                        )
+                      }
+                    />
+                  </Form.Item>
+                </Form.Item>
+
+                {phoneOtpSent && !phoneOtpVerified && (
+                  <div style={{ marginTop: '12px', marginBottom: '20px' }}>
+                    <div style={{ marginBottom: '8px' }}>
+                      <Text type="secondary" style={{ fontSize: '12px' }}>
+                        <ClockCircleOutlined /> Enter 6-digit SMS code
+                      </Text>
+                    </div>
+                    <Space direction="vertical" size="small" style={{ width: '100%' }}>
+                      <Input.OTP
+                        length={6}
+                        value={phoneOtp}
+                        onChange={(val) => setPhoneOtp(val)}
+                        size="large"
+                        variant="filled"
+                        style={{ borderRadius: '12px' }}
+                      />
+                      <Button
+                        type="primary"
+                        onClick={handleVerifyPhoneOtp}
+                        loading={phoneVerifyingOtp}
+                        block
+                        style={{ borderRadius: '10px', height: '40px', fontWeight: 600 }}
+                      >
+                        Verify & Continue
+                      </Button>
+                    </Space>
+                  </div>
+                )}
+                {phoneOtpVerified && (
+                  <div style={{
+                    background: '#f6ffed',
+                    padding: '12px 16px',
+                    borderRadius: '12px',
+                    marginBottom: '20px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px',
+                    border: '1px solid #b7eb8f'
+                  }}>
+                    <CheckCircleOutlined style={{ color: '#52c41a', fontSize: '18px' }} />
+                    <Text strong style={{ color: '#389e0d' }}>Verified Mobile Number</Text>
+                  </div>
+                )}
+              </Col>
+            </Row>
+
+            <Row gutter={16}>
+              <Col xs={24}>
+                <Form.Item label="Email Address" required>
+                  <Form.Item name="email" noStyle rules={[{ required: true, message: 'Please input your email!' }, { type: 'email', message: 'Please enter a valid email!' }]}>
+                    <Input
+                      size="large"
+                      placeholder="name@example.com"
+                      disabled={otpVerified}
+                      variant="filled"
+                      style={{ borderRadius: '12px' }}
+                      suffix={
+                        !otpVerified && (
+                          <Button
+                            type="link"
+                            size="small"
+                            onClick={handleSendOtp}
+                            loading={otpLoading}
+                            style={{ padding: 0 }}
+                          >
+                            {otpSent ? 'Resend' : 'Send OTP'}
+                          </Button>
+                        )
+                      }
+                    />
+                  </Form.Item>
+                </Form.Item>
+
+                {otpSent && !otpVerified && (
+                  <div style={{ marginTop: '12px', marginBottom: '20px' }}>
+                    <div style={{ marginBottom: '8px' }}>
+                      <Text type="secondary" style={{ fontSize: '12px' }}>
+                        <ClockCircleOutlined /> Enter 6-digit email code
+                      </Text>
+                    </div>
+                    <Space direction="vertical" size="small" style={{ width: '100%' }}>
+                      <Input.OTP
+                        length={6}
+                        value={otp}
+                        onChange={(val) => setOtp(val)}
+                        size="large"
+                        variant="filled"
+                        style={{ borderRadius: '12px' }}
+                      />
+                      <Button
+                        type="primary"
+                        onClick={handleVerifyOtp}
+                        loading={verifyingOtp}
+                        block
+                        style={{ borderRadius: '10px', height: '40px', fontWeight: 600 }}
+                      >
+                        Verify Email Address
+                      </Button>
+                    </Space>
+                  </div>
+                )}
+                {otpVerified && (
+                  <div style={{
+                    background: '#f6ffed',
+                    padding: '12px 16px',
+                    borderRadius: '12px',
+                    marginBottom: '20px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px',
+                    border: '1px solid #b7eb8f'
+                  }}>
+                    <CheckCircleOutlined style={{ color: '#52c41a', fontSize: '18px' }} />
+                    <Text strong style={{ color: '#389e0d' }}>Verified Email Address</Text>
+                  </div>
+                )}
+              </Col>
+            </Row>
+
+            <Row gutter={16}>
+              <Col xs={24}>
+                <Form.Item name="password" label="Password" rules={[{ required: true, message: 'Please input a password!' }, { min: 6, message: 'Password must be at least 6 characters!' }]}>
+                  <Input.Password size="large" placeholder="At least 6 characters" />
                 </Form.Item>
               </Col>
             </Row>
 
-            <Form.Item label="Email Address" required>
-              <Row gutter={8}>
-                <Col flex="auto">
-                  <Form.Item name="email" noStyle rules={[{ required: true, message: 'Please input your email!' }, { type: 'email', message: 'Please enter a valid email!' }]}>
-                    <Input size="large" placeholder="name@example.com" disabled={otpVerified} />
-                  </Form.Item>
-                </Col>
-                <Col>
-                  <Button 
-                    size="large" 
-                    onClick={handleSendOtp} 
-                    loading={otpLoading} 
-                    disabled={otpVerified || otpSent}
-                  >
-                    {otpSent ? 'Resend OTP' : 'Send OTP'}
-                  </Button>
-                </Col>
-              </Row>
-            </Form.Item>
-
-            {otpSent && !otpVerified && (
-              <Form.Item label="Verify OTP" required>
-                <Row gutter={8}>
-                  <Col flex="auto">
-                    <Input 
-                      size="large" 
-                      placeholder="Enter 6-digit OTP" 
-                      value={otp} 
-                      onChange={(e) => setOtp(e.target.value)} 
-                    />
-                  </Col>
-                  <Col>
-                    <Button 
-                      size="large" 
-                      type="primary" 
-                      onClick={handleVerifyOtp} 
-                      loading={verifyingOtp}
-                    >
-                      Verify
-                    </Button>
-                  </Col>
-                </Row>
-              </Form.Item>
-            )}
-
-            {otpVerified && (
-              <Alert 
-                title="Email Verified" 
-                type="success" 
-                showIcon 
-                style={{ marginBottom: '16px', borderRadius: '8px' }} 
-              />
-            )}
-
-            <Form.Item name="password" label="Password" rules={[{ required: true, message: 'Please input a password!' }, { min: 6, message: 'Password must be at least 6 characters!' }]}>
-              <Input.Password size="large" placeholder="At least 6 characters" />
+            <Form.Item
+              name="id_card"
+              label="Verification ID / Certification Card"
+              valuePropName="fileList"
+              getValueFromEvent={normFile}
+              rules={[{ required: true, message: 'Please upload a valid ID for verification' }]}
+              extra="Upload a photo of your ID or certification card to prove your skillset."
+            >
+              <Upload
+                listType="picture-card"
+                maxCount={1}
+                beforeUpload={() => false}
+                accept="image/*"
+              >
+                <div>
+                  <IdcardOutlined style={{ fontSize: '24px', color: '#8c8c8c' }} />
+                  <div style={{ marginTop: 8, color: '#595959' }}>Upload ID</div>
+                </div>
+              </Upload>
             </Form.Item>
 
             <Form.Item name="skills" label="Skillset" rules={[{ required: true, message: 'Please select at least one skill!' }]}>
@@ -246,15 +431,15 @@ const RegisterVolunteer = ({ onSuccess }) => {
             </Form.Item>
 
             <Form.Item label="Your Location" required>
-              <Alert 
-                message="Pick Location on Map" 
+              <Alert
+                message="Pick Location on Map"
                 description="Move the pin to your precise location. This will auto-fill your address, which you can edit below if needed."
-                type="info" 
-                showIcon 
+                type="info"
+                showIcon
                 style={{ marginBottom: '16px', borderRadius: '8px' }}
               />
               <LocationPickerMap onLocationChange={handleLocationChange} />
-              
+
               <div style={{ marginTop: '16px' }}>
                 <Row gutter={16}>
                   <Col xs={24}>

@@ -69,8 +69,12 @@ try:
     volunteer_collection.create_index([("location", GEOSPHERE)])
     field_worker_collection.create_index("email", unique=True)
     field_worker_collection.create_index([("location", GEOSPHERE)])
-    otp_collection.create_index("email", unique=True)
+    # OTP collection needs sparse indexes to allow both email and phone-based OTPs
+    otp_collection.drop_indexes() # Reset to apply new sparse settings
+    otp_collection.create_index("email", unique=True, sparse=True)
+    otp_collection.create_index("phone", unique=True, sparse=True)
     otp_collection.create_index("expires_at", expireAfterSeconds=0)  # TTL index
+
     issues_collection.create_index([("location", GEOSPHERE)])
     issues_collection.create_index("pincode")
     issues_collection.create_index("status")
@@ -138,6 +142,9 @@ def serialize_mongo_doc(doc):
         return [serialize_mongo_doc(item) for item in doc]
     return doc
 
+def generate_otp() -> str:
+    return str(random.randint(100000, 999999))
+
 # ── Pydantic Models ─────────────────────────────────────────────────────────────
 
 class RegisterRequest(BaseModel):
@@ -157,6 +164,7 @@ class RegisterRequest(BaseModel):
     skills: Optional[List[str]] = None
     availability: Optional[List[str]] = None
     hasVehicle: Optional[bool] = False
+    id_card: Optional[str] = None
 
 
 class LoginRequest(BaseModel):
@@ -169,6 +177,13 @@ class OTPRequest(BaseModel):
 
 class OTPVerifyRequest(BaseModel):
     email: EmailStr
+    otp: str
+
+class SMSOTPRequest(BaseModel):
+    phone: str
+
+class SMSOTPVerifyRequest(BaseModel):
+    phone: str
     otp: str
 
 
@@ -390,13 +405,46 @@ async def send_otp(req: OTPRequest):
             "error": str(e)
         }
 
+@app.post("/auth/send-sms-otp")
+async def send_sms_otp(req: SMSOTPRequest):
+    otp = generate_otp()
+    
+    # Store OTP with TTL (10 mins)
+    otp_collection.update_one(
+        {"phone": req.phone},
+        {
+            "$set": {
+                "phone": req.phone,
+                "otp": otp,
+                "expires_at": datetime.now(timezone.utc) + timedelta(minutes=10)
+            }
+        },
+        upsert=True
+    )
+    
+    logger.info(f"SMS OTP for {req.phone}: {otp}")
+    
+    # DEV MODE: Return the OTP in the response
+    return {
+        "message": "SMS OTP generated in DEV MODE",
+        "dev_otp": otp,
+        "info": "In production, this would be sent via an SMS gateway like Twilio."
+    }
+
+@app.post("/auth/verify-sms-otp")
+async def verify_sms_otp(req: SMSOTPVerifyRequest):
+    record = otp_collection.find_one({"phone": req.phone})
+    if not record or record["otp"] != req.otp:
+        raise HTTPException(status_code=400, detail="Invalid or expired SMS OTP")
+    
+    return {"message": "Phone number verified successfully"}
+
 @app.post("/auth/verify-otp")
 async def verify_otp(req: OTPVerifyRequest):
     record = otp_collection.find_one({"email": req.email})
     if not record or record["otp"] != req.otp:
         raise HTTPException(status_code=400, detail="Invalid or expired OTP")
     
-    # Optional: Mark as verified or just return success
     return {"message": "OTP verified successfully"}
 
 
@@ -446,6 +494,7 @@ async def register(req: RegisterRequest):
         "state": state,
         "street": street,
         "skills": req.skills or [],
+        "id_card": req.id_card,
         "availability": req.availability or [],
         "hasVehicle": req.hasVehicle,
         "points": 0,
