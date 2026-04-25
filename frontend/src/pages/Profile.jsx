@@ -1,12 +1,27 @@
 import React, { useState, useEffect } from 'react';
 import { Card, Typography, Tabs, Form, Input, Button, message, Spin, Row, Col, Statistic, List, Tag, Select, Space, Divider, Modal } from 'antd';
-import { UserOutlined, PhoneOutlined, EnvironmentOutlined, CheckCircleOutlined, TrophyOutlined, BarChartOutlined, ClockCircleOutlined, SettingOutlined, PlusOutlined } from '@ant-design/icons';
+import { UserOutlined, PhoneOutlined, EnvironmentOutlined, CheckCircleOutlined, TrophyOutlined, BarChartOutlined, ClockCircleOutlined, SettingOutlined, PlusOutlined, ArrowLeftOutlined } from '@ant-design/icons';
+import { useNavigate } from 'react-router-dom';
 import { updateProfile, getUserAnalytics, addIssueComment } from '../api';
 
 const { Title, Text, Paragraph } = Typography;
 const { TabPane } = Tabs;
 
+const skillOptions = [
+  'Medical Support',
+  'Logistics/Delivery',
+  'Teaching',
+  'Construction/Repairs',
+  'Language Translation',
+  'Cooking',
+  'Counseling',
+  'Driving',
+  'First Aid',
+  'IT Support',
+];
+
 const Profile = ({ user }) => {
+  const navigate = useNavigate();
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
   const [analyticsData, setAnalyticsData] = useState(null);
@@ -252,7 +267,18 @@ const Profile = ({ user }) => {
   };
 
   return (
-    <div style={{ maxWidth: '900px', margin: '0 auto' }}>
+    <div style={{ maxWidth: '900px', margin: '0 auto', paddingBottom: '40px' }}>
+      <div style={{ marginBottom: '24px' }}>
+        <Button 
+          type="text" 
+          icon={<ArrowLeftOutlined />} 
+          onClick={() => navigate('/')}
+          style={{ fontSize: '16px', color: '#595959', padding: 0 }}
+        >
+          Back to Dashboard
+        </Button>
+      </div>
+
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: '24px', gap: '16px' }}>
         <div style={{ width: '64px', height: '64px', borderRadius: '32px', background: '#1890ff', display: 'flex', justifyContent: 'center', alignItems: 'center', color: 'white', fontSize: '28px', fontWeight: 'bold' }}>
           {user?.fullName?.charAt(0).toUpperCase()}
@@ -310,8 +336,12 @@ const Profile = ({ user }) => {
                     <Divider />
                     <Title level={4} style={{ marginBottom: '24px' }}>Volunteer Preferences</Title>
                     
-                    <Form.Item label="Skills (e.g. Medical, Rescue, Teaching)" name="skills">
-                      <Select mode="tags" placeholder="Type and press enter to add skills" style={{ width: '100%' }} />
+                    <Form.Item label="Skills (Select from list)" name="skills">
+                      <Select mode="multiple" placeholder="Select your skills" style={{ width: '100%' }}>
+                        {skillOptions.map(skill => (
+                          <Select.Option key={skill} value={skill}>{skill}</Select.Option>
+                        ))}
+                      </Select>
                     </Form.Item>
                     
                     <Form.Item label="Availability" name="availability">
