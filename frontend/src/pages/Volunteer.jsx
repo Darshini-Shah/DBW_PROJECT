@@ -39,13 +39,14 @@ const Volunteer = ({ user }) => {
 
   /**
    * Fetch issues from the backend.
-   * @param {number|null} radiusOverride - Explicit value from onChangeComplete.
+   * @param {number|null} forcedRadius - Explicit value from onChangeComplete.
    *   When omitted, reads from radiusRef (always up-to-date).
+   * @param {boolean} isManual - Whether this is a manual refresh triggered by user.
    */
-  const fetchIssues = useCallback(async (radiusOverride = null) => {
+  const fetchIssues = useCallback(async (forcedRadius = null, isManual = false) => {
     setLoading(true);
     try {
-      const activeRadius = radiusOverride !== null ? radiusOverride : radiusRef.current;
+      const activeRadius = forcedRadius !== null ? forcedRadius : radiusRef.current;
       const params = {
         latitude: user?.latitude,
         longitude: user?.longitude,
@@ -55,6 +56,9 @@ const Volunteer = ({ user }) => {
       const data = await getIssues(params);
       setIssues(data.issues || []);
       initialLoadDone.current = true;
+      if (isManual) {
+        message.success('Issues updated!');
+      }
     } catch (err) {
       console.error('Failed to fetch issues:', err);
       message.error('Failed to load nearby issues');
@@ -89,10 +93,10 @@ const Volunteer = ({ user }) => {
       {/* ToastContainer removed */}
       <div style={{ marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'nowrap', gap: '12px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px', minWidth: 0 }}>
-          <Button 
-            icon={<ArrowLeftOutlined />} 
-            onClick={() => navigate(-1)} 
-            shape="circle" 
+          <Button
+            icon={<ArrowLeftOutlined />}
+            onClick={() => navigate(-1)}
+            shape="circle"
             style={{ border: 'none', background: '#f0f0f0', flexShrink: 0 }}
           />
           <div style={{ minWidth: 0 }}>
@@ -103,25 +107,33 @@ const Volunteer = ({ user }) => {
           </div>
         </div>
         <Space style={{ flexShrink: 0 }}>
-          <Button 
-            icon={<TrophyOutlined />} 
+          <Button
+            icon={<TrophyOutlined />}
             onClick={() => navigate('/leaderboard')}
             style={{ borderColor: '#ffd700', color: '#b8860b' }}
           >
             Leaderboard
           </Button>
-          <Button 
-            icon={<CarryOutOutlined />} 
+          <Button
+            icon={<CarryOutOutlined />}
             onClick={() => navigate('/my-tasks')}
             type="primary"
           >
             My Tasks
           </Button>
-          <Button icon={<ReloadOutlined />} onClick={fetchIssues} loading={loading}>
-            Refresh
-          </Button>
+          <div style={{ textAlign: 'right' }}>
+            <Button
+              icon={<ReloadOutlined />}
+              onClick={() => fetchIssues(null, true)}
+              loading={loading}
+              style={{ borderRadius: '8px' }}
+            >
+              Refresh
+            </Button>
+          </div>
         </Space>
       </div>
+
 
       {/* Radius filter */}
       <Card size="small" style={{ borderRadius: '12px', marginBottom: '16px' }} styles={{ body: { padding: '12px 24px' } }}>
@@ -139,6 +151,12 @@ const Volunteer = ({ user }) => {
             tooltip={{ formatter: (v) => `${v} km` }}
           />
         </Space>
+
+        {initialLoadDone.current && !loading && (
+                <span style={{ fontSize: '11px', color: '#bfbfbf', marginLeft: '12px' }}>
+                  (Last updated: {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })})
+                </span>
+              )}
       </Card>
 
       <Card style={{ borderRadius: '16px', boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }} styles={{ body: { padding: 0 } }}>
@@ -209,8 +227,8 @@ const Volunteer = ({ user }) => {
                           {item.date && <span><ClockCircleOutlined /> {item.date}</span>}
                           {item['number of volunteer need'] !== undefined && (
                             <span style={{ fontWeight: 500, color: item['number of volunteer need'] > 0 ? '#1890ff' : '#52c41a' }}>
-                              {item['number of volunteer need'] > 0 
-                                ? `Needs ${item['number of volunteer need']} more` 
+                              {item['number of volunteer need'] > 0
+                                ? `Needs ${item['number of volunteer need']} more`
                                 : 'Fully Staffed'}
                             </span>
                           )}
@@ -224,9 +242,9 @@ const Volunteer = ({ user }) => {
                             </div>
                             <Space size={[0, 4]} wrap>
                               {item.assigned_volunteers.map((vol, idx) => (
-                                <Tag 
-                                  key={vol.id || idx} 
-                                  icon={<UserOutlined />} 
+                                <Tag
+                                  key={vol.id || idx}
+                                  icon={<UserOutlined />}
                                   style={{ borderRadius: '12px', background: '#fff', border: '1px solid #d9d9d9' }}
                                 >
                                   {vol.name || 'Anonymous'}
