@@ -224,28 +224,28 @@ const RegisterFieldWorker = ({ onSuccess }) => {
             <Row gutter={16}>
               <Col xs={24}>
                 <Form.Item label="Phone Number" required>
-                  <Form.Item 
-                    name="phone" 
-                    noStyle 
+                  <Form.Item
+                    name="phone"
+                    noStyle
                     rules={[
                       { required: true, message: 'Please input your phone number!' },
                       { pattern: /^(?:\+91)?[6-9]\d{9}$/, message: 'Please enter a valid 10-digit mobile number' }
                     ]}
                   >
-                    <Input 
-                      size="large" 
-                      placeholder="E.g. 7358480256" 
-                      disabled={phoneOtpVerified} 
+                    <Input
+                      size="large"
+                      placeholder="E.g. 9876543210"
+                      disabled={phoneOtpVerified}
                       prefix={<span style={{ color: '#bfbfbf' }}>+91</span>}
                       variant="filled"
                       style={{ borderRadius: '12px' }}
                       suffix={
                         !phoneOtpVerified && (
-                          <Button 
-                            type="link" 
+                          <Button
+                            type="link"
                             size="small"
-                            onClick={handleSendPhoneOtp} 
-                            loading={phoneOtpLoading} 
+                            onClick={handleSendPhoneOtp}
+                            loading={phoneOtpLoading}
                             style={{ padding: 0 }}
                           >
                             {phoneOtpSent ? 'Resend' : 'Send OTP'}
@@ -264,17 +264,17 @@ const RegisterFieldWorker = ({ onSuccess }) => {
                       </Text>
                     </div>
                     <Space direction="vertical" size="small" style={{ width: '100%' }}>
-                      <Input.OTP 
-                        length={6} 
-                        value={phoneOtp} 
-                        onChange={(val) => setPhoneOtp(val)} 
+                      <Input.OTP
+                        length={6}
+                        value={phoneOtp}
+                        onChange={(val) => setPhoneOtp(val)}
                         size="large"
                         variant="filled"
                         style={{ borderRadius: '12px' }}
                       />
-                      <Button 
-                        type="primary" 
-                        onClick={handleVerifyPhoneOtp} 
+                      <Button
+                        type="primary"
+                        onClick={handleVerifyPhoneOtp}
                         loading={phoneVerifyingOtp}
                         block
                         style={{ borderRadius: '10px', height: '40px', fontWeight: 600 }}
@@ -285,10 +285,10 @@ const RegisterFieldWorker = ({ onSuccess }) => {
                   </div>
                 )}
                 {phoneOtpVerified && (
-                  <div style={{ 
-                    background: '#f6ffed', 
-                    padding: '12px 16px', 
-                    borderRadius: '12px', 
+                  <div style={{
+                    background: '#f6ffed',
+                    padding: '12px 16px',
+                    borderRadius: '12px',
                     marginBottom: '20px',
                     display: 'flex',
                     alignItems: 'center',
@@ -306,10 +306,10 @@ const RegisterFieldWorker = ({ onSuccess }) => {
               <Col xs={24}>
                 <Form.Item label="Email Address" required>
                   <Form.Item name="email" noStyle rules={[{ required: true, message: 'Please input your email!' }, { type: 'email', message: 'Please enter a valid email!' }]}>
-                    <Input 
-                      size="large" 
-                      placeholder="name@example.com" 
-                      disabled={otpVerified} 
+                    <Input
+                      size="large"
+                      placeholder="name@example.com"
+                      disabled={otpVerified}
                       variant="filled"
                       style={{ borderRadius: '12px' }}
                       suffix={
@@ -377,15 +377,15 @@ const RegisterFieldWorker = ({ onSuccess }) => {
 
             <Row gutter={16}>
               <Col xs={24}>
-                <Form.Item 
-                  name="password" 
-                  label="Password" 
+                <Form.Item
+                  name="password"
+                  label="Password"
                   rules={[
                     { required: true, message: 'Please input a password!' },
                     { min: 8, message: 'Password must be at least 8 characters!' },
-                    { 
-                      pattern: /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/, 
-                      message: 'Password must include uppercase, lowercase, number and special character!' 
+                    {
+                      pattern: /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/,
+                      message: 'Password must include uppercase, lowercase, number and special character!'
                     }
                   ]}
                 >
@@ -394,15 +394,15 @@ const RegisterFieldWorker = ({ onSuccess }) => {
               </Col>
             </Row>
 
-            <Form.Item 
-              name="id_card" 
-              label="Verification ID / Certification Card" 
+            <Form.Item
+              name="id_card"
+              label="Verification ID / Certification Card"
               valuePropName="fileList"
               getValueFromEvent={normFile}
               rules={[{ required: true, message: 'Please upload a valid ID for verification' }]}
-              extra="Upload a photo of your ID or certification card to prove your skillset."
+              extra="Upload a photo of your ID card."
             >
-              <Upload 
+              <Upload
                 listType="picture-card"
                 maxCount={1}
                 beforeUpload={() => false} // Prevent auto upload

@@ -252,7 +252,7 @@ const RegisterVolunteer = ({ onSuccess }) => {
                   >
                     <Input
                       size="large"
-                      placeholder="E.g. 7358480256"
+                      placeholder="E.g. 9876543210"
                       disabled={phoneOtpVerified}
                       prefix={<span style={{ color: '#bfbfbf' }}>+91</span>}
                       variant="filled"
