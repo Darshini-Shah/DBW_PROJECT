@@ -341,6 +341,9 @@ async def send_urgent_issue_email(issue_doc: dict):
 
 
 # ── OTP Endpoints ──────────────────────────────────────────────────────────────
+@app.get("/")
+async def root():
+    return {"message": "Backend is running!"}
 
 @app.post("/auth/send-otp")
 async def send_otp(req: OTPRequest):
