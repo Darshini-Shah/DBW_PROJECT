@@ -400,7 +400,7 @@ const RegisterFieldWorker = ({ onSuccess }) => {
               valuePropName="fileList"
               getValueFromEvent={normFile}
               rules={[{ required: true, message: 'Please upload a valid ID for verification' }]}
-              extra="Upload a photo of your ID or certification card to prove your skillset."
+              extra="Upload a photo of your ID"
             >
               <Upload 
                 listType="picture-card"
