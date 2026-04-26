@@ -59,9 +59,32 @@ export const verifyOTP = async (email, otp) => {
   return res.data;
 };
 
+export const sendSMSOTP = async (phone) => {
+  const res = await api.post('/auth/send-sms-otp', { phone });
+  return res.data;
+};
+
+export const verifySMSOTP = async (phone, otp) => {
+  const res = await api.post('/auth/verify-sms-otp', { phone, otp });
+  return res.data;
+};
+
 export const getMe = async () => {
   const res = await api.get('/auth/me');
   return res.data.user;
+};
+
+export const updateProfile = async (data) => {
+  const res = await api.put('/auth/me', data);
+  if (res.data.user) {
+    localStorage.setItem('user', JSON.stringify(res.data.user));
+  }
+  return res.data.user;
+};
+
+export const getUserAnalytics = async () => {
+  const res = await api.get('/auth/me/analytics');
+  return res.data;
 };
 
 export const logout = () => {
@@ -122,13 +145,23 @@ export const updateVolunteerDays = async (issueId, volunteerId, days) => {
   return res.data;
 };
 
-export const completeTask = async (issueId) => {
-  const res = await api.post(`/api/issues/${issueId}/complete`);
+export const completeTask = async (issueId, findings = '', summary = '') => {
+  const res = await api.post(`/api/issues/${issueId}/complete`, { findings, summary });
   return res.data;
 };
 
 export const startTask = async (issueId) => {
   const res = await api.post(`/api/issues/${issueId}/start`);
+  return res.data;
+};
+
+export const getIssueFindings = async (issueId) => {
+  const res = await api.get(`/api/issues/${issueId}/findings`);
+  return res.data;
+};
+
+export const addIssueComment = async (issueId, comment) => {
+  const res = await api.post(`/api/issues/${issueId}/comments`, { comment });
   return res.data;
 };
 

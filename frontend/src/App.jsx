@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Routes, Route, useNavigate, Navigate } from 'react-router-dom';
 import { LogoutOutlined, UserOutlined, LoginOutlined, EnvironmentOutlined } from '@ant-design/icons';
-import { Layout, Typography, ConfigProvider, Button, Tag, Space, Badge, Dropdown, List, Empty, Card, Popover } from 'antd';
+import { Layout, Typography, ConfigProvider, Button, Tag, Space, Badge, Dropdown, List, Empty, Card, Popover, Divider } from 'antd';
 import LoginPage from './pages/LoginPage';
 import RoleSelection from './pages/RoleSelection';
 import RegisterFieldWorker from './pages/RegisterFieldWorker';
@@ -11,6 +11,7 @@ import Volunteer from './pages/Volunteer';
 import Leaderboard from './pages/Leaderboard';
 import MyTasks from './pages/MyTasks';
 import DemandHeatmap from './pages/DemandHeatmap';
+import Profile from './pages/Profile';
 import { logout, getMe } from './api';
 import './App.css';
 
@@ -152,6 +153,14 @@ function App() {
                         </div>
                       )}
                     </div>
+
+                    <Divider style={{ margin: '16px 0' }} />
+                    <Button block type="primary" onClick={() => navigate('/profile')} style={{ marginBottom: '8px' }}>
+                      My Profile & Analytics
+                    </Button>
+                    <Button block type="default" onClick={handleLogout}>
+                      Logout
+                    </Button>
                   </div>
                 } 
                 trigger="click" 
@@ -161,15 +170,6 @@ function App() {
                   {user.role === 'field_worker' ? 'Field Worker' : 'Volunteer'}
                 </Tag>
               </Popover>
-
-              <Button 
-                type="default" 
-                icon={<LogoutOutlined />}
-                onClick={handleLogout}
-                style={{ fontWeight: 500 }}
-              >
-                Logout
-              </Button>
             </Space>
           )}
         </Header>
@@ -202,6 +202,9 @@ function App() {
               } />
               <Route path="/heatmap" element={
                 user ? <DemandHeatmap /> : <Navigate to="/login" />
+              } />
+              <Route path="/profile" element={
+                user ? <Profile user={user} /> : <Navigate to="/login" />
               } />
             </Routes>
           </div>

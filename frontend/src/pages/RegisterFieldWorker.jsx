@@ -1,10 +1,24 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Card, Form, Input, Button, Typography, Row, Col, Alert, App as AntApp } from 'antd';
-import { UserAddOutlined, ArrowRightOutlined, CompassOutlined, EnvironmentOutlined, ArrowLeftOutlined } from '@ant-design/icons';
-import { registerUser, sendOTP, verifyOTP } from '../api';
+import { Card, Form, Input, Button, Typography, Row, Col, Space, Alert, Upload, App as AntApp } from 'antd';
+import { UserAddOutlined, ArrowRightOutlined, CompassOutlined, EnvironmentOutlined, ArrowLeftOutlined, CheckCircleOutlined, ClockCircleOutlined, IdcardOutlined } from '@ant-design/icons';
+import { registerUser, sendOTP, verifyOTP, sendSMSOTP, verifySMSOTP } from '../api';
+import LocationPickerMap from '../components/LocationPickerMap';
 
 const { Title, Text } = Typography;
+
+const getBase64 = (file) =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = (error) => reject(error);
+  });
+
+const normFile = (e) => {
+  if (Array.isArray(e)) return e;
+  return e?.fileList;
+};
 
 const RegisterFieldWorker = ({ onSuccess }) => {
   const { message } = AntApp.useApp();
@@ -20,6 +34,13 @@ const RegisterFieldWorker = ({ onSuccess }) => {
   const [otpLoading, setOtpLoading] = useState(false);
   const [verifyingOtp, setVerifyingOtp] = useState(false);
   const [otp, setOtp] = useState('');
+
+  // Phone OTP state
+  const [phoneOtpSent, setPhoneOtpSent] = useState(false);
+  const [phoneOtpVerified, setPhoneOtpVerified] = useState(false);
+  const [phoneOtpLoading, setPhoneOtpLoading] = useState(false);
+  const [phoneVerifyingOtp, setPhoneVerifyingOtp] = useState(false);
+  const [phoneOtp, setPhoneOtp] = useState('');
 
   const handleSendOtp = async () => {
     const email = form.getFieldValue('email');
@@ -58,54 +79,58 @@ const RegisterFieldWorker = ({ onSuccess }) => {
     }
   };
 
-
-  const handleAutoDetectLocation = () => {
-    setIsLocating(true);
-    if ('geolocation' in navigator) {
-      navigator.geolocation.getCurrentPosition(
-        async (position) => {
-          const { latitude, longitude } = position.coords;
-
-          try {
-            const response = await fetch(
-              `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json&addressdetails=1`,
-              { headers: { 'User-Agent': 'SmartAllocator/1.0' } }
-            );
-            const data = await response.json();
-            const address = data.address || {};
-
-            const area = address.suburb || address.neighbourhood || address.quarter || '';
-            const city = address.city || address.town || address.village || '';
-            const pincode = address.postcode || '';
-
-            setLocationData({ latitude, longitude, area, city, pincode });
-            form.setFieldsValue({
-              location: area ? `${area}, ${city} - ${pincode}` : `${city} - ${pincode}`,
-            });
-            message.success(`Location detected: ${area || city} (${pincode})`);
-          } catch {
-            setLocationData({ latitude, longitude, area: '', city: '', pincode: '' });
-            form.setFieldsValue({ location: `${latitude.toFixed(4)}, ${longitude.toFixed(4)}` });
-            message.warning('GPS saved but address could not be resolved.');
-          }
-
-          setIsLocating(false);
-        },
-        () => {
-          message.error('Failed to get location. Please allow GPS permissions.');
-          setIsLocating(false);
-        },
-        { enableHighAccuracy: true, timeout: 10000 }
-      );
-    } else {
-      message.error('Geolocation is not supported by your browser.');
-      setIsLocating(false);
+  const handleSendPhoneOtp = async () => {
+    const phone = form.getFieldValue('phone');
+    if (!phone) {
+      message.error('Please enter your phone number first!');
+      return;
+    }
+    setPhoneOtpLoading(true);
+    try {
+      const res = await sendSMSOTP(phone);
+      message.success('SMS OTP sent to your phone!');
+      if (res.dev_otp) message.info(`[DEV MODE] SMS OTP: ${res.dev_otp}`, 10);
+      setPhoneOtpSent(true);
+    } catch (err) {
+      message.error(err.response?.data?.detail || 'Failed to send SMS OTP');
+    } finally {
+      setPhoneOtpLoading(false);
     }
   };
 
+  const handleVerifyPhoneOtp = async () => {
+    const phone = form.getFieldValue('phone');
+    if (!phoneOtp) {
+      message.error('Please enter the SMS OTP!');
+      return;
+    }
+    setPhoneVerifyingOtp(true);
+    try {
+      await verifySMSOTP(phone, phoneOtp);
+      message.success('Phone verified successfully!');
+      setPhoneOtpVerified(true);
+    } catch (err) {
+      message.error('Invalid SMS OTP. Please try again.');
+    } finally {
+      setPhoneVerifyingOtp(false);
+    }
+  };
+
+
+  const handleLocationChange = (locData) => {
+    setLocationData(locData);
+    form.setFieldsValue({
+      street: locData.street || '',
+      area: locData.area || '',
+      city: locData.city || '',
+      state: locData.state || '',
+      pincode: locData.pincode || '',
+    });
+  };
+
   const onFinish = async (values) => {
-    if (!otpVerified) {
-      message.error('Please verify your email with OTP first!');
+    if (!otpVerified || !phoneOtpVerified) {
+      message.error('Please verify both Email and Phone with OTP first!');
       return;
     }
 
@@ -118,14 +143,27 @@ const RegisterFieldWorker = ({ onSuccess }) => {
     setError(null);
 
     try {
+      let idCardBase64 = null;
+      // Robustly get the file object from Ant Design Upload state
+      const fileList = values.id_card;
+      if (fileList && fileList.length > 0) {
+        idCardBase64 = await getBase64(fileList[0].originFileObj);
+      }
+
       const { user } = await registerUser({
         email: values.email,
         password: values.password,
-        role: 'field_worker',
         fullName: values.fullName,
         phone: values.phone,
         latitude: locationData.latitude,
         longitude: locationData.longitude,
+        street: values.street,
+        area: values.area,
+        city: values.city,
+        state: values.state,
+        pincode: values.pincode,
+        id_card: idCardBase64,
+        role: 'field_worker',
       });
 
       message.success('Field Worker registered successfully!');
@@ -145,9 +183,9 @@ const RegisterFieldWorker = ({ onSuccess }) => {
     <Row justify="center" style={{ padding: '24px 16px' }}>
       <Col xs={24} sm={20} md={16} lg={12} xl={10}>
         <div style={{ marginBottom: '24px' }}>
-          <Button 
-            type="text" 
-            icon={<ArrowLeftOutlined />} 
+          <Button
+            type="text"
+            icon={<ArrowLeftOutlined />}
             onClick={() => navigate('/')}
             style={{ fontSize: '16px', color: '#595959' }}
           >
@@ -175,97 +213,251 @@ const RegisterFieldWorker = ({ onSuccess }) => {
           )}
 
           <Form form={form} layout="vertical" name="register_field_worker" onFinish={onFinish}>
-            <Form.Item name="fullName" label="Full Name" rules={[{ required: true, message: 'Please input your full name!' }]}>
-              <Input size="large" placeholder="E.g. Jane Doe" />
-            </Form.Item>
+            <Row gutter={16}>
+              <Col xs={24}>
+                <Form.Item name="fullName" label="Full Name" rules={[{ required: true, message: 'Please input your full name!' }]}>
+                  <Input size="large" placeholder="E.g. Jane Doe" />
+                </Form.Item>
+              </Col>
+            </Row>
 
-            <Form.Item label="Email ID" required>
-              <Row gutter={8}>
-                <Col flex="auto">
-                  <Form.Item name="email" noStyle rules={[{ required: true, message: 'Please input your email!' }, { type: 'email', message: 'Please enter a valid email!' }]}>
-                    <Input size="large" placeholder="name@example.com" disabled={otpVerified} />
-                  </Form.Item>
-                </Col>
-                <Col>
-                  <Button 
-                    size="large" 
-                    onClick={handleSendOtp} 
-                    loading={otpLoading} 
-                    disabled={otpVerified || otpSent}
+            <Row gutter={16}>
+              <Col xs={24}>
+                <Form.Item label="Phone Number" required>
+                  <Form.Item 
+                    name="phone" 
+                    noStyle 
+                    rules={[
+                      { required: true, message: 'Please input your phone number!' },
+                      { pattern: /^(?:\+91)?[6-9]\d{9}$/, message: 'Please enter a valid 10-digit mobile number' }
+                    ]}
                   >
-                    {otpSent ? 'Resend' : 'Send OTP'}
-                  </Button>
-                </Col>
-              </Row>
-            </Form.Item>
-
-            {otpSent && !otpVerified && (
-              <Form.Item label="Verify OTP" required>
-                <Row gutter={8}>
-                  <Col flex="auto">
                     <Input 
                       size="large" 
-                      placeholder="Enter 6-digit OTP" 
-                      value={otp} 
-                      onChange={(e) => setOtp(e.target.value)} 
+                      placeholder="E.g. 7358480256" 
+                      disabled={phoneOtpVerified} 
+                      prefix={<span style={{ color: '#bfbfbf' }}>+91</span>}
+                      variant="filled"
+                      style={{ borderRadius: '12px' }}
+                      suffix={
+                        !phoneOtpVerified && (
+                          <Button 
+                            type="link" 
+                            size="small"
+                            onClick={handleSendPhoneOtp} 
+                            loading={phoneOtpLoading} 
+                            style={{ padding: 0 }}
+                          >
+                            {phoneOtpSent ? 'Resend' : 'Send OTP'}
+                          </Button>
+                        )
+                      }
                     />
-                  </Col>
-                  <Col>
-                    <Button 
+                  </Form.Item>
+                </Form.Item>
+
+                {phoneOtpSent && !phoneOtpVerified && (
+                  <div style={{ marginTop: '12px', marginBottom: '20px' }}>
+                    <div style={{ marginBottom: '8px' }}>
+                      <Text type="secondary" style={{ fontSize: '12px' }}>
+                        <ClockCircleOutlined /> Enter 6-digit SMS code
+                      </Text>
+                    </div>
+                    <Space direction="vertical" size="small" style={{ width: '100%' }}>
+                      <Input.OTP 
+                        length={6} 
+                        value={phoneOtp} 
+                        onChange={(val) => setPhoneOtp(val)} 
+                        size="large"
+                        variant="filled"
+                        style={{ borderRadius: '12px' }}
+                      />
+                      <Button 
+                        type="primary" 
+                        onClick={handleVerifyPhoneOtp} 
+                        loading={phoneVerifyingOtp}
+                        block
+                        style={{ borderRadius: '10px', height: '40px', fontWeight: 600 }}
+                      >
+                        Verify & Continue
+                      </Button>
+                    </Space>
+                  </div>
+                )}
+                {phoneOtpVerified && (
+                  <div style={{ 
+                    background: '#f6ffed', 
+                    padding: '12px 16px', 
+                    borderRadius: '12px', 
+                    marginBottom: '20px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px',
+                    border: '1px solid #b7eb8f'
+                  }}>
+                    <CheckCircleOutlined style={{ color: '#52c41a', fontSize: '18px' }} />
+                    <Text strong style={{ color: '#389e0d' }}>Verified Mobile Number</Text>
+                  </div>
+                )}
+              </Col>
+            </Row>
+
+            <Row gutter={16}>
+              <Col xs={24}>
+                <Form.Item label="Email Address" required>
+                  <Form.Item name="email" noStyle rules={[{ required: true, message: 'Please input your email!' }, { type: 'email', message: 'Please enter a valid email!' }]}>
+                    <Input 
                       size="large" 
-                      type="primary" 
-                      onClick={handleVerifyOtp} 
-                      loading={verifyingOtp}
-                    >
-                      Verify
-                    </Button>
-                  </Col>
-                </Row>
-              </Form.Item>
-            )}
+                      placeholder="name@example.com" 
+                      disabled={otpVerified} 
+                      variant="filled"
+                      style={{ borderRadius: '12px' }}
+                      suffix={
+                        !otpVerified && (
+                          <Button
+                            type="link"
+                            size="small"
+                            onClick={handleSendOtp}
+                            loading={otpLoading}
+                            style={{ padding: 0 }}
+                          >
+                            {otpSent ? 'Resend' : 'Send OTP'}
+                          </Button>
+                        )
+                      }
+                    />
+                  </Form.Item>
+                </Form.Item>
 
-            {otpVerified && (
-              <Alert 
-                title="Email Verified" 
-                type="success" 
-                showIcon 
-                style={{ marginBottom: '16px', borderRadius: '8px' }} 
-              />
-            )}
+                {otpSent && !otpVerified && (
+                  <div style={{ marginTop: '12px', marginBottom: '20px' }}>
+                    <div style={{ marginBottom: '8px' }}>
+                      <Text type="secondary" style={{ fontSize: '12px' }}>
+                        <ClockCircleOutlined /> Enter 6-digit email code
+                      </Text>
+                    </div>
+                    <Space direction="vertical" size="small" style={{ width: '100%' }}>
+                      <Input.OTP
+                        length={6}
+                        value={otp}
+                        onChange={(val) => setOtp(val)}
+                        size="large"
+                        variant="filled"
+                        style={{ borderRadius: '12px' }}
+                      />
+                      <Button
+                        type="primary"
+                        onClick={handleVerifyOtp}
+                        loading={verifyingOtp}
+                        block
+                        style={{ borderRadius: '10px', height: '40px', fontWeight: 600 }}
+                      >
+                        Verify Email Address
+                      </Button>
+                    </Space>
+                  </div>
+                )}
+                {otpVerified && (
+                  <div style={{
+                    background: '#f6ffed',
+                    padding: '12px 16px',
+                    borderRadius: '12px',
+                    marginBottom: '20px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px',
+                    border: '1px solid #b7eb8f'
+                  }}>
+                    <CheckCircleOutlined style={{ color: '#52c41a', fontSize: '18px' }} />
+                    <Text strong style={{ color: '#389e0d' }}>Verified Email Address</Text>
+                  </div>
+                )}
+              </Col>
+            </Row>
 
-            <Form.Item name="password" label="Password" rules={[{ required: true, message: 'Please input a password!' }, { min: 6, message: 'Password must be at least 6 characters!' }]}>
-              <Input.Password size="large" placeholder="At least 6 characters" />
-            </Form.Item>
+            <Row gutter={16}>
+              <Col xs={24}>
+                <Form.Item 
+                  name="password" 
+                  label="Password" 
+                  rules={[
+                    { required: true, message: 'Please input a password!' },
+                    { min: 8, message: 'Password must be at least 8 characters!' },
+                    { 
+                      pattern: /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/, 
+                      message: 'Password must include uppercase, lowercase, number and special character!' 
+                    }
+                  ]}
+                >
+                  <Input.Password size="large" placeholder="At least 8 characters with mix of types" />
+                </Form.Item>
+              </Col>
+            </Row>
 
-            <Form.Item name="phone" label="Phone Number" rules={[{ required: true, message: 'Please input your phone number!' }]}>
-              <Input size="large" placeholder="+91 98765 43210" />
+            <Form.Item 
+              name="id_card" 
+              label="Verification ID / Certification Card" 
+              valuePropName="fileList"
+              getValueFromEvent={normFile}
+              rules={[{ required: true, message: 'Please upload a valid ID for verification' }]}
+              extra="Upload a photo of your ID"
+            >
+              <Upload 
+                listType="picture-card"
+                maxCount={1}
+                beforeUpload={() => false} // Prevent auto upload
+                accept="image/*"
+              >
+                <div>
+                  <IdcardOutlined style={{ fontSize: '24px', color: '#8c8c8c' }} />
+                  <div style={{ marginTop: 8, color: '#595959' }}>Upload ID</div>
+                </div>
+              </Upload>
             </Form.Item>
 
             <Form.Item label="Your Location" required>
-              <Alert 
-                message="GPS Location Required" 
-                description="Field workers must be registered at their primary area of operation via GPS."
-                type="info" 
-                showIcon 
+              <Alert
+                message="Pick Location on Map"
+                description="Move the pin to your precise location. This will auto-fill your address, which you can edit below if needed."
+                type="info"
+                showIcon
                 style={{ marginBottom: '16px', borderRadius: '8px' }}
               />
-              <Button
-                size="large"
-                icon={<CompassOutlined />}
-                onClick={handleAutoDetectLocation}
-                loading={isLocating}
-                type={locationData ? 'primary' : 'default'}
-                block
-                style={{ height: '50px', fontSize: '16px', fontWeight: 600 }}
-              >
-                {locationData ? '✓ Location Detected' : 'Click to Auto-detect GPS Location'}
-              </Button>
+              <LocationPickerMap onLocationChange={handleLocationChange} />
 
-              {locationData && (
-                <div style={{ marginTop: '12px', padding: '12px', background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: '8px', fontSize: '13px', color: '#389e0d' }}>
-                  <EnvironmentOutlined /> <strong>GPS Active:</strong> {locationData.area ? `${locationData.area}, ` : ''}{locationData.city} ({locationData.pincode})
-                </div>
-              )}
+              <div style={{ marginTop: '16px' }}>
+                <Row gutter={16}>
+                  <Col xs={24}>
+                    <Form.Item name="street" label="Street / Landmark">
+                      <Input placeholder="Street name or nearby landmark" />
+                    </Form.Item>
+                  </Col>
+                </Row>
+                <Row gutter={16}>
+                  <Col xs={24} md={12}>
+                    <Form.Item name="area" label="Area / District">
+                      <Input placeholder="E.g. Andheri West" />
+                    </Form.Item>
+                  </Col>
+                  <Col xs={24} md={12}>
+                    <Form.Item name="city" label="City" rules={[{ required: true, message: 'City is required' }]}>
+                      <Input placeholder="E.g. Mumbai" />
+                    </Form.Item>
+                  </Col>
+                </Row>
+                <Row gutter={16}>
+                  <Col xs={24} md={12}>
+                    <Form.Item name="state" label="State" rules={[{ required: true, message: 'State is required' }]}>
+                      <Input placeholder="E.g. Maharashtra" />
+                    </Form.Item>
+                  </Col>
+                  <Col xs={24} md={12}>
+                    <Form.Item name="pincode" label="Pincode" rules={[{ required: true, message: 'Valid 6-digit Pincode required', pattern: /^\d{6}$/ }]}>
+                      <Input placeholder="E.g. 400053" maxLength={6} />
+                    </Form.Item>
+                  </Col>
+                </Row>
+              </div>
             </Form.Item>
 
             <Form.Item style={{ marginTop: '32px', marginBottom: 0 }}>

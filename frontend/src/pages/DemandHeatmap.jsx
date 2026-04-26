@@ -97,7 +97,7 @@ const DemandHeatmap = () => {
         </Text>
 
         {/* Legend */}
-        <div style={{ background: '#f5f5f5', padding: '12px', borderRadius: '8px' }}>
+        {/* <div style={{ background: '#f5f5f5', padding: '12px', borderRadius: '8px' }}>
           <Text strong style={{ fontSize: 12, display: 'block', marginBottom: 8, textTransform: 'uppercase', color: '#8c8c8c' }}>Legend</Text>
           <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
             <div style={{ width: 12, height: 12, backgroundColor: '#FF5F1F', borderRadius: '50%', marginRight: 12, boxShadow: '0 0 8px rgba(255,95,31,0.6)' }}></div>
@@ -111,7 +111,7 @@ const DemandHeatmap = () => {
             <div style={{ width: 12, height: 12, backgroundColor: '#39FF14', borderRadius: '50%', marginRight: 12, boxShadow: '0 0 8px rgba(57,255,20,0.6)' }}></div>
             <Text style={{ fontSize: '13px', color: '#262626' }}>Low Priority (Neon Green)</Text>
           </div>
-        </div>
+        </div> */}
       </Card>
 
       <MapContainer

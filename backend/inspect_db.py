@@ -43,6 +43,17 @@ def inspect():
     else:
         print("  [Empty]")
     print("\n")
+    
+    # NEW: Cleanup query for specific test user
+    target_phone = "7358480256"
+    print(f"--- Attempting to delete user with phone: {target_phone} ---")
+    
+    res1 = db["volunteer"].delete_many({"phone": target_phone})
+    res2 = db["field_worker"].delete_many({"phone": target_phone})
+    
+    print(f"  - Deleted from volunteer: {res1.deleted_count}")
+    print(f"  - Deleted from field_worker: {res2.deleted_count}")
+    print("\n")
 
 if __name__ == "__main__":
     inspect()

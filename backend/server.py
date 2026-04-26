@@ -20,7 +20,17 @@ from dotenv import load_dotenv
 
 from geocoding import reverse_geocode, get_radius_km_for_urgency, forward_geocode
 from pipeline import process_survey_pdf
-from model import enrich_issue
+from model import enrich_issue, SKILL_OPTIONS
+import math
+
+def haversine_distance(lat1, lon1, lat2, lon2):
+    """Calculates distance in km between two points."""
+    R = 6371.0
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat / 2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return R * c
 
 # ── Configuration ───────────────────────────────────────────────────────────────
 
@@ -59,8 +69,12 @@ try:
     volunteer_collection.create_index([("location", GEOSPHERE)])
     field_worker_collection.create_index("email", unique=True)
     field_worker_collection.create_index([("location", GEOSPHERE)])
-    otp_collection.create_index("email", unique=True)
+    # OTP collection needs sparse indexes to allow both email and phone-based OTPs
+    otp_collection.drop_indexes() # Reset to apply new sparse settings
+    otp_collection.create_index("email", unique=True, sparse=True)
+    otp_collection.create_index("phone", unique=True, sparse=True)
     otp_collection.create_index("expires_at", expireAfterSeconds=0)  # TTL index
+
     issues_collection.create_index([("location", GEOSPHERE)])
     issues_collection.create_index("pincode")
     issues_collection.create_index("status")
@@ -128,6 +142,9 @@ def serialize_mongo_doc(doc):
         return [serialize_mongo_doc(item) for item in doc]
     return doc
 
+def generate_otp() -> str:
+    return str(random.randint(100000, 999999))
+
 # ── Pydantic Models ─────────────────────────────────────────────────────────────
 
 class RegisterRequest(BaseModel):
@@ -138,10 +155,16 @@ class RegisterRequest(BaseModel):
     phone: str
     latitude: float
     longitude: float
+    pincode: Optional[str] = None
+    city: Optional[str] = None
+    area: Optional[str] = None
+    state: Optional[str] = None
+    street: Optional[str] = None
     # Volunteer-specific (optional)
     skills: Optional[List[str]] = None
     availability: Optional[List[str]] = None
     hasVehicle: Optional[bool] = False
+    id_card: Optional[str] = None
 
 
 class LoginRequest(BaseModel):
@@ -156,6 +179,13 @@ class OTPVerifyRequest(BaseModel):
     email: EmailStr
     otp: str
 
+class SMSOTPRequest(BaseModel):
+    phone: str
+
+class SMSOTPVerifyRequest(BaseModel):
+    phone: str
+    otp: str
+
 
 class IssueCreateRequest(BaseModel):
     category: str
@@ -164,6 +194,8 @@ class IssueCreateRequest(BaseModel):
     latitude: float
     longitude: float
     number_of_volunteers_needed: Optional[int] = 1
+    req_skillset: Optional[str] = "" # Raw text from form
+
 
 
 class UserResponse(BaseModel):
@@ -185,6 +217,24 @@ class UserResponse(BaseModel):
 class UpdateDaysRequest(BaseModel):
     volunteer_id: str
     days: int
+
+class CompleteTaskRequest(BaseModel):
+    findings: Optional[str] = ""
+    summary: Optional[str] = ""
+
+class ProfileUpdateRequest(BaseModel):
+    phone: Optional[str] = None
+    city: Optional[str] = None
+    area: Optional[str] = None
+    pincode: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    skills: Optional[List[str]] = None
+    availability: Optional[List[str]] = None
+    hasVehicle: Optional[bool] = None
+
+class IssueCommentRequest(BaseModel):
+    comment: str
 
 
 # ── FastAPI App ─────────────────────────────────────────────────────────────────
@@ -355,13 +405,46 @@ async def send_otp(req: OTPRequest):
             "error": str(e)
         }
 
+@app.post("/auth/send-sms-otp")
+async def send_sms_otp(req: SMSOTPRequest):
+    otp = generate_otp()
+    
+    # Store OTP with TTL (10 mins)
+    otp_collection.update_one(
+        {"phone": req.phone},
+        {
+            "$set": {
+                "phone": req.phone,
+                "otp": otp,
+                "expires_at": datetime.now(timezone.utc) + timedelta(minutes=10)
+            }
+        },
+        upsert=True
+    )
+    
+    logger.info(f"SMS OTP for {req.phone}: {otp}")
+    
+    # DEV MODE: Return the OTP in the response
+    return {
+        "message": "SMS OTP generated in DEV MODE",
+        "dev_otp": otp,
+        "info": "In production, this would be sent via an SMS gateway like Twilio."
+    }
+
+@app.post("/auth/verify-sms-otp")
+async def verify_sms_otp(req: SMSOTPVerifyRequest):
+    record = otp_collection.find_one({"phone": req.phone})
+    if not record or record["otp"] != req.otp:
+        raise HTTPException(status_code=400, detail="Invalid or expired SMS OTP")
+    
+    return {"message": "Phone number verified successfully"}
+
 @app.post("/auth/verify-otp")
 async def verify_otp(req: OTPVerifyRequest):
     record = otp_collection.find_one({"email": req.email})
     if not record or record["otp"] != req.otp:
         raise HTTPException(status_code=400, detail="Invalid or expired OTP")
     
-    # Optional: Mark as verified or just return success
     return {"message": "OTP verified successfully"}
 
 
@@ -381,14 +464,19 @@ async def register(req: RegisterRequest):
     # LOCATION LOGIC: Mandatory auto-detect GPS coordinates
     lat, lng = req.latitude, req.longitude
     
-    # Use reverse geocoding to fill in details like pincode, city, etc.
-    try:
-        geo = await reverse_geocode(lat, lng)
-        pincode, city, area, state = geo["pincode"], geo["city"], geo["area"], geo["state"]
-    except Exception as e:
-        logger.warning(f"Reverse geocode failed for {req.email}: {e}")
-        # Default fallbacks if reverse geocoding fails but we have GPS
-        pincode, city, area, state = "000000", "Unknown", "Unknown", "Unknown"
+    # Use provided address fields or fallback to reverse geocoding
+    pincode, city, area, state, street = req.pincode, req.city, req.area, req.state, req.street
+    
+    if not pincode or not city:
+        try:
+            geo = await reverse_geocode(lat, lng)
+            pincode = pincode or geo.get("pincode", "")
+            city = city or geo.get("city", "")
+            area = area or geo.get("area", "")
+            state = state or geo.get("state", "")
+        except Exception as e:
+            logger.warning(f"Reverse geocode failed for {req.email}: {e}")
+            pincode, city, area, state = pincode or "000000", city or "Unknown", area or "Unknown", state or "Unknown"
 
     user_doc = {
         "email": req.email,
@@ -404,7 +492,9 @@ async def register(req: RegisterRequest):
         "city": city,
         "area": area, # District/State for volunteers
         "state": state,
+        "street": street,
         "skills": req.skills or [],
+        "id_card": req.id_card,
         "availability": req.availability or [],
         "hasVehicle": req.hasVehicle,
         "points": 0,
@@ -426,9 +516,11 @@ async def register(req: RegisterRequest):
     user_doc["latitude"] = req.latitude
     user_doc["longitude"] = req.longitude
 
-    logger.info(f"Registered {req.role}: {req.email} at {geo['area']}, {geo['city']} ({geo['pincode']})")
+    loc_str = f"{area}, {city} ({pincode})"
+    logger.info(f"Registered {req.role}: {req.email} at {loc_str}")
 
     return {
+
         "token": token,
         "user": {
             "id": user_doc["_id"],
@@ -510,6 +602,144 @@ async def get_me(current_user: dict = Depends(get_current_user)):
     }
 
 
+@app.put("/auth/me")
+async def update_me(req: ProfileUpdateRequest, current_user: dict = Depends(get_current_user)):
+    collection = volunteer_collection if current_user["role"] == "volunteer" else field_worker_collection
+    
+    update_data = {}
+    if req.phone is not None: update_data["phone"] = req.phone
+    if req.skills is not None: update_data["skills"] = req.skills
+    if req.availability is not None: update_data["availability"] = req.availability
+    if req.hasVehicle is not None: update_data["hasVehicle"] = req.hasVehicle
+    
+    # Location updates
+    if req.latitude is not None and req.longitude is not None:
+        update_data["location"] = {"type": "Point", "coordinates": [req.longitude, req.latitude]}
+        update_data["latitude"] = req.latitude
+        update_data["longitude"] = req.longitude
+        try:
+            geo = await reverse_geocode(req.latitude, req.longitude)
+            update_data["pincode"] = geo["pincode"]
+            update_data["city"] = geo["city"]
+            update_data["area"] = geo["area"]
+            update_data["state"] = geo["state"]
+        except Exception:
+            pass # Keep existing or use provided
+    
+    # Allow manual override
+    if req.city is not None: update_data["city"] = req.city
+    if req.area is not None: update_data["area"] = req.area
+    if req.pincode is not None: update_data["pincode"] = req.pincode
+
+    if not update_data:
+        return {"message": "No data to update"}
+
+    collection.update_one({"_id": ObjectId(current_user["_id"])}, {"$set": update_data})
+    
+    # Fetch updated user to return
+    updated_user = collection.find_one({"_id": ObjectId(current_user["_id"])})
+    coords = updated_user.get("location", {}).get("coordinates", [0, 0])
+    
+    return {
+        "message": "Profile updated successfully",
+        "user": {
+            "id": str(updated_user["_id"]),
+            "email": updated_user["email"],
+            "role": updated_user["role"],
+            "fullName": updated_user["fullName"],
+            "phone": updated_user["phone"],
+            "pincode": updated_user.get("pincode", ""),
+            "city": updated_user.get("city", ""),
+            "area": updated_user.get("area", ""),
+            "latitude": coords[1] if len(coords) > 1 else 0,
+            "longitude": coords[0] if len(coords) > 0 else 0,
+            "skills": updated_user.get("skills", []),
+            "availability": updated_user.get("availability", []),
+            "hasVehicle": updated_user.get("hasVehicle", False),
+            "points": updated_user.get("points", 0),
+        }
+    }
+
+
+@app.get("/auth/me/analytics")
+async def get_me_analytics(current_user: dict = Depends(get_current_user)):
+    if current_user["role"] == "volunteer":
+        vol_id = current_user["_id"]
+        # Convert to string and ObjectId for flexibility
+        id_variants = [vol_id]
+        try: id_variants.append(ObjectId(vol_id))
+        except Exception: pass
+        
+        # Get all completed assignments
+        accepted = list(assignments_collection.find(
+            {"volunteer_id": {"$in": id_variants}, "status": "accepted"}
+        ))
+        issue_ids = []
+        for a in accepted:
+            try: issue_ids.append(ObjectId(a["issue_id"]))
+            except: pass
+        
+        issues = list(issues_collection.find({"_id": {"$in": issue_ids}, "status": "completed"}))
+        
+        total_active_days = 0
+        past_contributions = []
+        
+        for issue in issues:
+            days = 0
+            points_earned = 0
+            for vol in issue.get("assigned_volunteers", []):
+                if vol["id"] == vol_id:
+                    days = vol.get("days_worked", 0)
+                    urgency = int(issue.get("scale of urgency", 1))
+                    points_earned = days * urgency
+                    total_active_days += days
+                    break
+            
+            past_contributions.append({
+                "issue_id": str(issue["_id"]),
+                "surid": issue.get("surid"),
+                "category": issue.get("type of issue") or issue.get("category"),
+                "area": issue.get("geographical area"),
+                "days_worked": days,
+                "points_earned": points_earned,
+                "field_findings": issue.get("field_findings"),
+                "completed_at": issue.get("end_date")
+            })
+            
+        return {
+            "total_points": current_user.get("points", 0),
+            "total_active_days": total_active_days,
+            "tasks_completed": len(past_contributions),
+            "past_contributions": sorted(past_contributions, key=lambda x: x.get("completed_at") or "", reverse=True)
+        }
+    else:
+        # Field Worker
+        reports = list(issues_collection.find({"reported_by": current_user["_id"]}).sort("created_at", -1))
+        
+        stats = {"total": len(reports), "open": 0, "ongoing": 0, "completed": 0}
+        report_list = []
+        
+        for r in reports:
+            status = r.get("status", "open")
+            if status in stats: stats[status] += 1
+            else: stats["open"] += 1
+            
+            report_list.append({
+                "issue_id": str(r["_id"]),
+                "surid": r.get("surid"),
+                "category": r.get("type of issue") or r.get("category"),
+                "status": status,
+                "created_at": r.get("created_at"),
+                "comments": r.get("comments", []),
+                "field_findings": r.get("field_findings")
+            })
+            
+        return {
+            "stats": stats,
+            "reports": report_list
+        }
+
+
 # ── Issues Endpoints ────────────────────────────────────────────────────────────
 
 @app.get("/api/issues")
@@ -545,11 +775,11 @@ async def get_issues(
         if len(user_coords) >= 2:
             lng, lat = user_coords[0], user_coords[1]
 
-    # If we have coordinates, do a geo query
+    # ── Build the geo query (isolated — if it fails we fall back to pincode) ──
+    geo_query_built = False
     if lat is not None and lng is not None:
         search_radius = radius_km or 15.0  # Default 15km radius
         radius_meters = search_radius * 1000
-
         query["location"] = {
             "$nearSphere": {
                 "$geometry": {
@@ -559,47 +789,93 @@ async def get_issues(
                 "$maxDistance": radius_meters,
             }
         }
+        geo_query_built = True
+        logger.info(f"Geo query: lat={lat}, lng={lng}, radius={search_radius}km ({radius_meters}m)")
     elif pincode:
         query["pincode"] = pincode
 
+    # ── Fetch issues (with geo fallback on failure) ────────────────────────────
     try:
         issues = list(issues_collection.find(query).limit(100))
-        
-        # If the requester is a volunteer, filter by matching skills and location (optional but recommended by user)
-        if current_user.get("role") == "volunteer":
-            filtered_issues = []
-            user_skills = [s.lower() for s in current_user.get("skills", [])]
-            user_area = current_user.get("area", "").lower()
-            user_city = current_user.get("city", "").lower()
-
-            for issue in issues:
-                issue_category = issue.get("type of issue", "").lower()
-                issue_area = issue.get("geographical area", "").lower()
-                
-                # Check for skill match
-                skill_match = any(user_skill in issue_category or issue_category in user_skill for user_skill in user_skills)
-                
-                # Check for area match (city or specific area)
-                area_match = (user_area and user_area in issue_area) or \
-                             (user_city and user_city in issue_area) or \
-                             (issue_area and issue_area in user_area)
-
-                # Volunteer sees it if it matches skills OR location (as fallback, or both)
-                # Following matcher.py's spirit: Location match is often enough, but Skills prioritize.
-                if skill_match or area_match:
-                    filtered_issues.append(serialize_mongo_doc(issue))
-            
-            return {"issues": filtered_issues, "count": len(filtered_issues)}
-
-        serialized_issues = [serialize_mongo_doc(i) for i in issues]
-        return {"issues": serialized_issues, "count": len(serialized_issues)}
+        logger.info(f"Geo query returned {len(issues)} issues")
     except Exception as e:
-        logger.error(f"Error fetching issues: {e}")
-        # Fallback: return without geo filter
-        fallback_query = {"status": status_filter} if status_filter else {}
-        issues = list(issues_collection.find(fallback_query).limit(50))
-        serialized_issues = [serialize_mongo_doc(i) for i in issues]
-        return {"issues": serialized_issues, "count": len(serialized_issues)}
+        logger.warning(f"Geo query failed ({e}), using manual Python distance fallback")
+        # Drop geo filter, keep status + assigned_volunteers filter
+        fallback_query = {k: v for k, v in query.items() if k != "location"}
+        potential_issues = list(issues_collection.find(fallback_query).limit(200))
+        
+        issues = []
+        if lat is not None and lng is not None:
+            search_radius = radius_km or 15.0
+            for iss in potential_issues:
+                loc = iss.get("location", {})
+                coords = loc.get("coordinates") if isinstance(loc, dict) else None
+                if coords and len(coords) >= 2:
+                    dist = haversine_distance(lat, lng, coords[1], coords[0])
+                    if dist <= search_radius:
+                        issues.append(iss)
+            logger.info(f"Manual distance filter: {len(issues)}/{len(potential_issues)} within {search_radius}km")
+        else:
+            issues = potential_issues
+
+    # ── Volunteer skill filter (Strict) ───────────────────────────────────────
+    if current_user.get("role") == "volunteer":
+        vol_skills = set(s.lower().strip() for s in current_user.get("skills", []))
+        
+        # Mapping from issue category to a default skill if req_skillset is missing
+        CATEGORY_TO_SKILL = {
+            "Medical": ["Medical Support", "First Aid"],
+            "Food": ["Logistics/Delivery", "Cooking"],
+            "Water": ["Logistics/Delivery"],
+            "Logistics": ["Logistics/Delivery", "Driving"],
+            "Sanitation/Infrastructure": ["Construction/Repairs"],
+            "Education": ["Teaching"],
+        }
+
+        filtered_issues = []
+        for issue in issues:
+            req_data = issue.get("req_skillset")
+            
+            # 1. If it's already a list, use it directly
+            if isinstance(req_data, list) and req_data:
+                issue_skills = set(s.lower().strip() for s in req_data)
+            else:
+                # 2. If it's a string or empty, try mapping from category + keyword scan
+                cat = issue.get("type of issue") or issue.get("type_of_issue") or "Other"
+                mapped_skills = list(CATEGORY_TO_SKILL.get(cat, []))
+                
+                # Scan raw text (which might be in req_skillset itself if it's a string)
+                raw_text = str(req_data or "").lower()
+                if raw_text:
+                    for skill in SKILL_OPTIONS:
+                        kw = skill.lower().split("/")[0].split(" ")[0]
+                        if kw in raw_text and skill not in mapped_skills:
+                            mapped_skills.append(skill)
+                
+                if not mapped_skills:
+                    continue # Hide if no clear skills found
+                issue_skills = set(s.lower().strip() for s in mapped_skills)
+
+            # Strict Match: intersection must be truthy
+            if vol_skills & issue_skills:
+                filtered_issues.append(serialize_mongo_doc(issue))
+
+
+
+        logger.info(
+            f"Volunteer {current_user.get('email')} — "
+            f"{len(filtered_issues)}/{len(issues)} issues passed skill filter "
+            f"(vol_skills={vol_skills})"
+        )
+        return {"issues": filtered_issues, "count": len(filtered_issues), "debug": {
+            "geo_applied": geo_query_built,
+            "radius_km": radius_km,
+            "total_before_filter": len(issues),
+            "vol_skills": list(vol_skills),
+        }}
+
+    serialized_issues = [serialize_mongo_doc(i) for i in issues]
+    return {"issues": serialized_issues, "count": len(serialized_issues)}
 
 
 @app.get("/api/heatmap-data")
@@ -733,7 +1009,9 @@ async def create_issue(
         "reported_by_name": current_user["fullName"],
         "assigned_volunteers": [],
         "created_at": datetime.now(timezone.utc).isoformat(),
+        "req_skillset": req.req_skillset,
     }
+
 
     # Enrich the issue with AI-derived fields (req_skillset, estimated_days, max_points)
     # This is the single Gemini call that adds all missing metadata.
@@ -753,7 +1031,7 @@ async def create_issue(
     if req.urgency > 7:
         background_tasks.add_task(send_urgent_issue_email, issue_doc)
 
-    logger.info(f"Issue {surid} created at {geo['area']}, {geo['city']} (urgency: {req.urgency}, radius: {radius_km}km)")
+    logger.info(f"Issue {surid} created at {geo['area']}, {geo['city']} (urgency: {req.urgency})")
 
     return {"issue": issue_doc}
 
@@ -794,15 +1072,11 @@ async def accept_issue(issue_id: str, current_user: dict = Depends(get_current_u
         if invite and invite.get("status") == "accepted":
             raise HTTPException(status_code=400, detail="You have already accepted this issue")
 
-        # Count how many have already accepted
-        accepted_count = assignments_collection.count_documents(
-            {"issue_id": issue_id, "status": "accepted"}
-        )
-
-        if accepted_count >= num_needed:
+        # Check if still needed
+        if num_needed <= 0:
             raise HTTPException(
                 status_code=400,
-                detail=f"This issue is already fully staffed ({num_needed}/{num_needed} volunteers)"
+                detail="This issue is already fully staffed."
             )
 
         now = datetime.now(timezone.utc).isoformat()
@@ -826,38 +1100,44 @@ async def accept_issue(issue_id: str, current_user: dict = Depends(get_current_u
             upsert=True
         )
 
-        # 2. Add to issue's assigned_volunteers using $addToSet (prevents duplicates)
+        # 2. Add to issue's assigned_volunteers and DECREMENT the need count
         vol_entry = {
             "id": vol_id,
             "name": current_user.get("fullName", ""),
             "points": current_user.get("points", 0),
-            "days_worked": 0
+            "days_worked": 0,
+            "accepted_at": now
         }
-        issues_collection.update_one(
-            {"_id": ObjectId(issue_id)},
-            {"$addToSet": {"assigned_volunteers": vol_entry}}
+        
+        # Atomically update the issue
+        res = issues_collection.find_one_and_update(
+            {"_id": ObjectId(issue_id), "number of volunteer need": {"$gt": 0}},
+            {
+                "$addToSet": {"assigned_volunteers": vol_entry},
+                "$inc": {"number of volunteer need": -1, "num_vol_needed": -1}
+            },
+            return_document=True
         )
 
-        # Calculate new count
-        new_accepted_count = assignments_collection.count_documents(
-            {"issue_id": issue_id, "status": "accepted"}
-        )
+        if not res:
+            # If find_one_and_update failed, it means the count hit 0 between our check and the update
+            raise HTTPException(status_code=400, detail="Issue just became fully staffed.")
 
-        # If we just hit the cap → mark issue as ongoing
-        if new_accepted_count >= num_needed:
+        # 3. If we just hit the cap → mark issue as ongoing
+        if res.get("number of volunteer need", 0) <= 0:
             issues_collection.update_one(
                 {"_id": ObjectId(issue_id)},
                 {"$set": {"status": "ongoing"}}
             )
             logger.info(f"Issue {issue_id} is now fully staffed → status: ongoing")
 
-        logger.info(f"Issue {issue_id} accepted successfully by {current_user['fullName']} ({new_accepted_count}/{num_needed})")
+        logger.info(f"Issue {issue_id} accepted by {current_user['fullName']}. Remaining need: {res.get('number of volunteer need')}")
         return {
             "message": "Issue accepted successfully",
-            "accepted": new_accepted_count,
-            "needed": num_needed,
-            "fully_staffed": new_accepted_count >= num_needed,
+            "remaining_need": res.get("number of volunteer need"),
+            "fully_staffed": res.get("number of volunteer need", 0) <= 0,
         }
+
 
     except HTTPException:
         raise
@@ -910,15 +1190,39 @@ async def get_my_tasks(current_user: dict = Depends(get_current_user)):
         issue = issue_map.get(a["issue_id"])
         if issue:
             issue["_id"] = str(issue["_id"])
-            issue["is_manager"] = False  # simplified; manager logic can be added later
+            # Determine manager: volunteer with highest points in assigned_volunteers
+            assigned_vols = issue.get("assigned_volunteers", [])
+            if assigned_vols:
+                manager = max(assigned_vols, key=lambda x: x.get("points", 0))
+                issue["is_manager"] = (manager["id"] == vol_id)
+            else:
+                issue["is_manager"] = False
             issues.append(issue)
 
     return {"issues": issues}
 
 
 @app.post("/api/issues/{issue_id}/update-days")
-async def update_volunteer_days(issue_id: str, req: UpdateDaysRequest, current_user: dict = Depends(get_current_user)):
-    """Manager adds days to a volunteer for a specific issue."""
+async def update_volunteer_days(
+    issue_id: str,
+    req: UpdateDaysRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Manager adds days to a volunteer for a specific issue.
+
+    Constraint — max_days cap:
+      The total days_worked for any volunteer CANNOT exceed the number of
+      calendar days that have elapsed since the task's start_date, counting
+      start_date itself as Day 1.
+
+      Formula:  max_allowed = (today - start_date).days + 1
+
+      Example:
+        start_date = 2026-04-25  (Day 1)
+        today      = 2026-04-27  (Day 3)
+        → max_allowed = 2 + 1 = 3
+    """
     issue = issues_collection.find_one({"_id": ObjectId(issue_id)})
     if not issue:
         raise HTTPException(status_code=404, detail="Issue not found")
@@ -927,6 +1231,7 @@ async def update_volunteer_days(issue_id: str, req: UpdateDaysRequest, current_u
     if not assigned_vols:
         raise HTTPException(status_code=400, detail="No volunteers assigned to this issue")
 
+    # ── Manager check ────────────────────────────────────────────────────────
     manager = max(assigned_vols, key=lambda x: x.get("points", 0))
     if manager["id"] != current_user["_id"]:
         raise HTTPException(status_code=403, detail="Only the manager can update days")
@@ -934,16 +1239,69 @@ async def update_volunteer_days(issue_id: str, req: UpdateDaysRequest, current_u
     if issue.get("status") == "completed":
         raise HTTPException(status_code=400, detail="Task is already completed")
 
-    # Update the specific volunteer's days_worked in the array
+    # ── Max-days cap (start_date = Day 1) ────────────────────────────────────
+    start_date_raw = issue.get("start_date")
+    if start_date_raw:
+        try:
+            # start_date may be an ISO string (with or without tz)
+            start_dt = datetime.fromisoformat(start_date_raw.replace("Z", "+00:00"))
+            today = datetime.now(timezone.utc)
+            elapsed_days = (today.date() - start_dt.date()).days
+            max_allowed_days = elapsed_days + 1  # Day 1 = start day itself
+        except Exception as parse_err:
+            logger.warning(f"Could not parse start_date '{start_date_raw}': {parse_err}")
+            max_allowed_days = None  # skip cap if parse fails
+    else:
+        # Task not yet explicitly started — no start_date recorded
+        max_allowed_days = None
+
+    # Find the target volunteer's current days_worked
+    target_vol = next(
+        (v for v in assigned_vols if v["id"] == req.volunteer_id), None
+    )
+    if target_vol is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Volunteer is not assigned to this issue"
+        )
+
+    current_days = target_vol.get("days_worked", 0)
+    proposed_days = current_days + req.days
+
+    if max_allowed_days is not None and proposed_days > max_allowed_days:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Cannot add {req.days} day(s): volunteer already has "
+                f"{current_days} day(s) recorded and the task has only been "
+                f"running for {max_allowed_days} day(s) "
+                f"(start date counts as Day 1). "
+                f"Maximum allowed is {max_allowed_days} day(s) total."
+            ),
+        )
+
+    # ── Persist the increment ─────────────────────────────────────────────────
     result = issues_collection.update_one(
         {"_id": ObjectId(issue_id), "assigned_volunteers.id": req.volunteer_id},
-        {"$inc": {"assigned_volunteers.$.days_worked": req.days}}
+        {"$inc": {"assigned_volunteers.$.days_worked": req.days}},
     )
 
     if result.modified_count == 0:
-        raise HTTPException(status_code=400, detail="Failed to update days. Volunteer might not be in this issue.")
+        raise HTTPException(
+            status_code=400,
+            detail="Failed to update days. Volunteer might not be in this issue.",
+        )
 
-    return {"message": "Days updated successfully"}
+    logger.info(
+        f"Days updated: issue={issue_id}, volunteer={req.volunteer_id}, "
+        f"+{req.days} day(s) → total={proposed_days} "
+        f"(max_allowed={max_allowed_days})"
+    )
+    return {
+        "message": "Days updated successfully",
+        "days_worked": proposed_days,
+        "max_allowed_days": max_allowed_days,
+    }
 
 
 @app.post("/api/issues/{issue_id}/start")
@@ -972,8 +1330,8 @@ async def start_issue(issue_id: str, current_user: dict = Depends(get_current_us
 
 
 @app.post("/api/issues/{issue_id}/complete")
-async def complete_issue(issue_id: str, current_user: dict = Depends(get_current_user)):
-    """Manager marks task as done. Points are awarded."""
+async def complete_issue(issue_id: str, req: CompleteTaskRequest = CompleteTaskRequest(), current_user: dict = Depends(get_current_user)):
+    """Manager marks task as done. Points are awarded. Findings are stored."""
     issue = issues_collection.find_one({"_id": ObjectId(issue_id)})
     if not issue:
         raise HTTPException(status_code=404, detail="Issue not found")
@@ -989,30 +1347,82 @@ async def complete_issue(issue_id: str, current_user: dict = Depends(get_current
     if manager["id"] != current_user["_id"]:
         raise HTTPException(status_code=403, detail="Only the manager can complete the task")
 
-    # Update issue status and end date
+    # Build update payload
+    update_fields = {
+        "status": "completed",
+        "end_date": datetime.now(timezone.utc).isoformat()
+    }
+
+    # Store field findings if provided
+    if req.findings or req.summary:
+        update_fields["field_findings"] = {
+            "notes": req.findings or "",
+            "summary": req.summary or "",
+            "recorded_by": current_user.get("fullName", ""),
+            "recorded_by_id": current_user["_id"],
+            "recorded_at": datetime.now(timezone.utc).isoformat()
+        }
+
     issues_collection.update_one(
         {"_id": ObjectId(issue_id)},
-        {
-            "$set": {
-                "status": "completed",
-                "end_date": datetime.now(timezone.utc).isoformat()
-            }
-        }
+        {"$set": update_fields}
     )
 
-    # Award points to volunteers: days_worked * 5
+    # Award points to volunteers: days_worked * urgency
+    urgency = int(issue.get("scale of urgency", 1))
+    points_awarded = []
     for vol in assigned_vols:
         days = vol.get("days_worked", 0)
-        points_to_add = days * 5
+        points_to_add = days * urgency
         if points_to_add > 0:
             volunteer_collection.update_one(
                 {"_id": ObjectId(vol["id"])},
                 {"$inc": {"points": points_to_add}}
             )
+        points_awarded.append({"id": vol["id"], "name": vol.get("name", ""), "days": days, "points": points_to_add})
 
-    return {"message": "Task completed successfully. Points have been distributed."}
+    logger.info(f"Task {issue_id} completed by manager {current_user['fullName']}. Points: {points_awarded}")
+    return {"message": "Task completed successfully. Points have been distributed.", "points_awarded": points_awarded}
 
 
+
+@app.get("/api/issues/{issue_id}/findings")
+async def get_issue_findings(issue_id: str, current_user: dict = Depends(get_current_user)):
+    """Retrieve field findings for a completed issue."""
+    issue = issues_collection.find_one({"_id": ObjectId(issue_id)})
+    if not issue:
+        raise HTTPException(status_code=404, detail="Issue not found")
+
+    findings = issue.get("field_findings", None)
+    return {
+        "surid": issue.get("surid"),
+        "status": issue.get("status"),
+        "field_findings": findings
+    }
+
+
+@app.post("/api/issues/{issue_id}/comments")
+async def add_issue_comment(issue_id: str, req: IssueCommentRequest, current_user: dict = Depends(get_current_user)):
+    """Field worker adds a comment to an issue they reported."""
+    issue = issues_collection.find_one({"_id": ObjectId(issue_id)})
+    if not issue:
+        raise HTTPException(status_code=404, detail="Issue not found")
+        
+    if issue.get("reported_by") != current_user["_id"]:
+        raise HTTPException(status_code=403, detail="Only the reporter can add comments to this issue")
+        
+    comment_doc = {
+        "text": req.comment,
+        "added_at": datetime.now(timezone.utc).isoformat(),
+        "added_by": current_user.get("fullName")
+    }
+    
+    issues_collection.update_one(
+        {"_id": ObjectId(issue_id)},
+        {"$push": {"comments": comment_doc}}
+    )
+    
+    return {"message": "Comment added successfully", "comment": comment_doc}
 
 
 # Notifications endpoints removed

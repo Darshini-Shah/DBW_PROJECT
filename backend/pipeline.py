@@ -99,11 +99,14 @@ FIELDS TO EXTRACT (for each survey):
 8. pincode (6-digit PIN code)
 9. num_ppl_affected (Integer or null)
 10. num_vol_needed (Integer or null)
+11. req_skillset (Raw text description of skills or types of volunteers needed from the form)
 
 STRICT RULES:
 - Output ONLY a valid JSON array.
 - If text is hard to read, make your best guess or use null.
 - Do not fabricate data not present or implied in the text.
+- Match "req_skillset" to any specific mentions of skills or worker types.
+
 
 RAW TEXT:
 {raw_text}
@@ -243,6 +246,7 @@ async def upload_surveys_to_db(
         surid = f"SUR-{counter['sequence_value']:03d}"
 
         # Build the issue document
+        raw_skill_text = survey.get("req_skillset") or ""
         issue_doc = {
             "surid": surid,
             "date": survey.get("date", datetime.now(timezone.utc).strftime("%Y-%m-%d")),
@@ -257,7 +261,8 @@ async def upload_surveys_to_db(
             "number of volunteer need": survey.get("number of volunteer need") or survey.get("num_vol_needed") or 1,
             "what is the issue": survey.get("what_is_the_issue") or survey.get("what is the issue") or "",
             "scale of urgency": survey.get("scale of urgency") or 5,
-            "req_skillset": survey.get("req_skillset", []),
+            # Start with raw text; Step 2.5 (enrichment) will try to turn it into a list.
+            "req_skillset": raw_skill_text, 
             "num_ppl_affected": survey.get("num_ppl_affected"),
             "estimated_days": survey.get("estimated_days"),
             "max_points": survey.get("max_points"),
@@ -268,6 +273,21 @@ async def upload_surveys_to_db(
             "assigned_volunteers": [],
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
+
+        # Try to map raw text to SKILL_OPTIONS if possible (pre-enrichment)
+        if isinstance(issue_doc["req_skillset"], str) and issue_doc["req_skillset"]:
+            from model import SKILL_OPTIONS
+            raw_text = issue_doc["req_skillset"].lower()
+            mapped_skills = []
+            for skill in SKILL_OPTIONS:
+                keyword = skill.lower().split("/")[0].split(" ")[0]
+                if keyword in raw_text:
+                    mapped_skills.append(skill)
+            if mapped_skills:
+                issue_doc["req_skillset"] = mapped_skills
+
+
+
 
         # Add geo-location logic
         from geocoding import forward_geocode, reverse_geocode
