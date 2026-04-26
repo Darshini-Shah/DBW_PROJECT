@@ -244,13 +244,19 @@ app = FastAPI(
     description="Geo-aware NGO resource allocation backend",
     version="1.0.0",
 )
-
+origins = [
+    "http://localhost:5173",
+    "http://localhost:5174",  
+    "http://localhost:5175", 
+    "http://localhost:3000", # <--- Added the missing comma here
+    "https://dbw-project-1.onrender.com", 
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:5174", "http://localhost:5175", "http://localhost:3000"],
+    allow_origins=origins,            # Allows your frontend to talk to this backend
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["*"],              # Allows GET, POST, etc.
+    allow_headers=["*"],              # Allows all headers
 )
 
 
