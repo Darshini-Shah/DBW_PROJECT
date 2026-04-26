@@ -6,7 +6,7 @@ import 'leaflet.heat';
 import { Card, Typography, Button } from 'antd';
 import { ArrowLeftOutlined } from '@ant-design/icons';
 import 'leaflet/dist/leaflet.css';
-import axios from 'axios';
+import api from '../api';
 
 const { Title, Text } = Typography;
 
@@ -46,7 +46,7 @@ const DemandHeatmap = () => {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const response = await axios.get('http://localhost:8000/api/heatmap-data');
+        const response = await api.get('/api/heatmap-data');
         if (response.data && Array.isArray(response.data)) {
           // Response is a list of objects {lat, lng, importance}
           // Map importance (1-100) to intensity (0.0-1.0)
