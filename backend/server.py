@@ -249,7 +249,7 @@ origins = [
     "http://localhost:5174",  
     "http://localhost:5175", 
     "http://localhost:3000", # <--- Added the missing comma here
-    "https://dbw-project-1.onrender.com", 
+    "https://MatchPoint.onrender.com",
 ]
 app.add_middleware(
     CORSMiddleware,
