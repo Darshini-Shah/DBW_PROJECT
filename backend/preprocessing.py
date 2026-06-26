@@ -6,7 +6,7 @@ from PIL import Image
 from dotenv import load_dotenv
     
 # Load the variables from .env
-load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"), override=True)
 
 # Get the paths from environment variables
 POPPLER_PATH = os.getenv('POPPLER_PATH')

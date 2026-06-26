@@ -7,7 +7,7 @@ from pymongo import MongoClient
 from dotenv import load_dotenv
 from bson import ObjectId
 
-load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"), override=True)
 uri = os.getenv("MONGODB_URI")
 db_name = os.getenv("DB_NAME", "Dbw_project")
 client = MongoClient(uri)
@@ -47,11 +47,11 @@ print()
 
 # ── Index check ────────────────────────────────────────────────────────
 print("INDEXES on 'issues' collection:")
-for idx in db["issues"].index_information().values():
-    print(f"  {idx['name']}: {idx['key']}")
+for name, idx in db["issues"].index_information().items():
+    print(f"  {name}: {idx['key']}")
 
 print("\nINDEXES on 'volunteer' collection:")
-for idx in db["volunteer"].index_information().values():
-    print(f"  {idx['name']}: {idx['key']}")
+for name, idx in db["volunteer"].index_information().items():
+    print(f"  {name}: {idx['key']}")
 
 client.close()

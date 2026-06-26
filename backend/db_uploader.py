@@ -83,7 +83,7 @@ def load_json_data(file_path: str) -> List[Dict[str, Any]]:
 
 def main():
     # Load environment variables from the root directory
-    load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+    load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"), override=True)
     
     mongodb_uri = os.getenv("MONGODB_URI")
     if not mongodb_uri or "your_mongodb_uri_here" in mongodb_uri:

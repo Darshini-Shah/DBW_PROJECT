@@ -3,8 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { MapContainer, TileLayer, useMap } from 'react-leaflet';
 import * as L from 'leaflet';
 import 'leaflet.heat';
-import { Card, Typography, Button } from 'antd';
-import { ArrowLeftOutlined } from '@ant-design/icons';
+import { Card, Typography, Button, Tag } from 'antd';
+import { ArrowLeftOutlined, FireOutlined } from '@ant-design/icons';
 import 'leaflet/dist/leaflet.css';
 import axios from 'axios';
 
@@ -18,16 +18,16 @@ const HeatmapLayer = ({ points }) => {
     console.log("Map received data:", points);
     if (!points || points.length === 0) return;
 
-    // points is expected to be an array of [lat, lng, intensity]
+    // points is an array of [lat, lng, intensity]
     const heat = L.heatLayer(points, {
-      radius: 30,
-      blur: 25,
+      radius: 20,       // Tighter radius → more precise per-location coloring
+      blur: 15,         // Less blur → hotspots stay closer to real coordinates
       max: 1.0,
-      minOpacity: 0.5,
+      minOpacity: 0.4,
       gradient: {
-        0.4: '#39FF14', // Neon Green (Low)
-        0.7: '#FAFF00', // Neon Yellow (Medium)
-        1.0: '#FF5F1F'  // Neon Orange (High)
+        0.3: '#39FF14',  // Neon Green  (Low)
+        0.65: '#FAFF00', // Neon Yellow (Medium)
+        1.0: '#FF5F1F'   // Neon Orange (High)
       }
     }).addTo(map);
 
@@ -42,23 +42,27 @@ const HeatmapLayer = ({ points }) => {
 const DemandHeatmap = () => {
   const navigate = useNavigate();
   const [points, setPoints] = useState([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchData = async () => {
       try {
         const response = await axios.get('http://localhost:8000/api/heatmap-data');
         if (response.data && Array.isArray(response.data)) {
-          // Response is a list of objects {lat, lng, importance}
-          // Map importance (1-100) to intensity (0.0-1.0)
-          const data = response.data.map(item => [
-            item.lat,
-            item.lng,
-            (item.importance || 50) / 100
-          ]);
+          // Map importance (1-100) to intensity (0.0-1.0), skip null-island coords
+          const data = response.data
+            .filter(item => item.lat && item.lng && !(item.lat === 0 && item.lng === 0))
+            .map(item => [
+              item.lat,
+              item.lng,
+              (item.importance || 50) / 100
+            ]);
           setPoints(data);
         }
       } catch (error) {
         console.error('Error fetching heatmap data:', error);
+      } finally {
+        setLoading(false);
       }
     };
 
@@ -74,7 +78,7 @@ const DemandHeatmap = () => {
           top: 20,
           left: 20,
           zIndex: 1000,
-          width: 320,
+          width: 300,
           boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
           borderRadius: 12,
           border: 'none',
@@ -83,35 +87,46 @@ const DemandHeatmap = () => {
         }}
         styles={{ body: { padding: '20px' } }}
       >
-        <Button 
-          type="text" 
-          icon={<ArrowLeftOutlined />} 
+        <Button
+          type="text"
+          icon={<ArrowLeftOutlined />}
           onClick={() => navigate('/')}
           style={{ padding: 0, marginBottom: '12px', color: '#8c8c8c' }}
         >
           Back to Dashboard
         </Button>
-        <Title level={4} style={{ margin: 0, marginBottom: 8, color: '#1f1f1f' }}>Priority Heatmap</Title>
-        <Text style={{ display: 'block', marginBottom: 16, color: '#595959', fontSize: '13px' }}>
-          Visualizing demand hotspots based on report importance and density across regions.
+        <Title level={4} style={{ margin: 0, marginBottom: 4, color: '#1f1f1f' }}>
+          Priority Heatmap
+        </Title>
+        <Text style={{ display: 'block', marginBottom: 12, color: '#595959', fontSize: '13px' }}>
+          Demand hotspots by report importance &amp; density.
         </Text>
 
+        {/* Point count badge */}
+        <div style={{ marginBottom: 16 }}>
+          <Tag icon={<FireOutlined />} color="orange">
+            {loading ? 'Loading...' : `${points.length} active issue${points.length !== 1 ? 's' : ''} mapped`}
+          </Tag>
+        </div>
+
         {/* Legend */}
-        {/* <div style={{ background: '#f5f5f5', padding: '12px', borderRadius: '8px' }}>
-          <Text strong style={{ fontSize: 12, display: 'block', marginBottom: 8, textTransform: 'uppercase', color: '#8c8c8c' }}>Legend</Text>
-          <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
-            <div style={{ width: 12, height: 12, backgroundColor: '#FF5F1F', borderRadius: '50%', marginRight: 12, boxShadow: '0 0 8px rgba(255,95,31,0.6)' }}></div>
-            <Text style={{ fontSize: '13px', color: '#262626' }}>High Priority (Neon Orange)</Text>
+        <div style={{ background: '#f5f5f5', padding: '12px', borderRadius: '8px' }}>
+          <Text strong style={{ fontSize: 11, display: 'block', marginBottom: 8, textTransform: 'uppercase', color: '#8c8c8c', letterSpacing: 1 }}>
+            Legend
+          </Text>
+          <div style={{ display: 'flex', alignItems: 'center', marginBottom: 6 }}>
+            <div style={{ width: 12, height: 12, backgroundColor: '#FF5F1F', borderRadius: '50%', marginRight: 10, boxShadow: '0 0 6px rgba(255,95,31,0.7)', flexShrink: 0 }} />
+            <Text style={{ fontSize: '12px', color: '#262626' }}>High Priority</Text>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
-            <div style={{ width: 12, height: 12, backgroundColor: '#FAFF00', borderRadius: '50%', marginRight: 12, boxShadow: '0 0 8px rgba(250,255,0,0.6)' }}></div>
-            <Text style={{ fontSize: '13px', color: '#262626' }}>Medium Priority (Neon Yellow)</Text>
+          <div style={{ display: 'flex', alignItems: 'center', marginBottom: 6 }}>
+            <div style={{ width: 12, height: 12, backgroundColor: '#FAFF00', borderRadius: '50%', marginRight: 10, boxShadow: '0 0 6px rgba(250,255,0,0.7)', flexShrink: 0 }} />
+            <Text style={{ fontSize: '12px', color: '#262626' }}>Medium Priority</Text>
           </div>
           <div style={{ display: 'flex', alignItems: 'center' }}>
-            <div style={{ width: 12, height: 12, backgroundColor: '#39FF14', borderRadius: '50%', marginRight: 12, boxShadow: '0 0 8px rgba(57,255,20,0.6)' }}></div>
-            <Text style={{ fontSize: '13px', color: '#262626' }}>Low Priority (Neon Green)</Text>
+            <div style={{ width: 12, height: 12, backgroundColor: '#39FF14', borderRadius: '50%', marginRight: 10, boxShadow: '0 0 6px rgba(57,255,20,0.7)', flexShrink: 0 }} />
+            <Text style={{ fontSize: '12px', color: '#262626' }}>Low Priority</Text>
           </div>
-        </div> */}
+        </div>
       </Card>
 
       <MapContainer

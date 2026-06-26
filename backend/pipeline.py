@@ -15,7 +15,7 @@ from typing import List, Dict, Any, Optional
 from dotenv import load_dotenv
 
 # Load environment variables from the root directory
-load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"), override=True)
 
 logger = logging.getLogger(__name__)
 

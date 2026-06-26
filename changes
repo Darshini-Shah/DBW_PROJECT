@@ -1,0 +1,94 @@
+# Changes Record
+
+## 1. Environment Variable Loading Override Fix
+- **Issue**: Environment variables defined in the `.env` file (like `GEMINI_API_KEY`) were not taking precedence over matching environment variables already set on the host system or terminal process. This caused the backend to load old or invalid keys, leading to Gemini API authentication failures (403 errors), causing OCR/AI structuring to extract 0 items.
+- **Fix**: Added the `override=True` parameter to all `load_dotenv` calls inside backend python files, and updated scripts to resolve paths relative to their directory.
+
+### Files Modified for Environment Loading:
+- **backend/pipeline.py**
+  - Updated `load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))` to include `override=True`.
+- **backend/server.py**
+  - Updated `load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))` to include `override=True`.
+- **backend/model.py**
+  - Replaced the parameterless `load_dotenv()` with `load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"), override=True)` to ensure it locates the root `.env` configuration file properly and overrides any pre-existing variables.
+- **backend/structure_data.py**
+  - Replaced `load_dotenv()` with `load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"), override=True)`.
+- **backend/preprocessing.py**
+  - Replaced `load_dotenv()` with `load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"), override=True)`.
+- **backend/matcher.py**
+  - Updated `load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))` to include `override=True`.
+- **backend/db_uploader.py**
+  - Updated `load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))` to include `override=True`.
+- **backend/diagnose.py**
+  - Updated `load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))` to include `override=True`.
+- **backend/inspect_db.py**
+  - Updated `load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))` to include `override=True`.
+
+---
+
+## 2. Windows Diagnostic Script Fixes
+- **backend/diagnose.py**
+  - **Issue**: Attempting to run the diagnose script crashed with a `KeyError: 'name'` when printing database indexes.
+  - **Fix**: Corrected the indexing loop to use `.items()` instead of `.values()`, allowing it to correctly access both the index names and keys.
+
+---
+
+## 3. Unicode Print Crash Fix
+- **backend/model.py**
+  - **Issue**: Running the model enrichment test script crashed on Windows terminals with a `UnicodeEncodeError: 'charmap' codec can't encode characters` due to rendering decorative Unicode box-drawing characters (`──`).
+  - **Fix**: Changed the printed header boundary from Unicode characters to standard ASCII dashes (`--- Enriched Issue ---`), allowing it to compile and print on any terminal encoding.
+
+---
+
+## 4. Strong Password Enforcement
+- **backend/server.py**
+  - **Issue**: Registration allowed passwords of length 6 with no complexity requirements, exposing accounts to security risks.
+  - **Fix**: Added `is_strong_password(password)` helper to enforce standard complexity: minimum 8 characters, at least 1 uppercase letter, 1 lowercase letter, 1 number, and 1 special character. Validated in `/auth/register`.
+
+---
+
+## 5. Location Geocoding Signup Fallback
+- **backend/server.py**
+  - **Issue**: If the frontend passed `0.0, 0.0` for GPS coordinates (which happens if browser location permissions are disabled/blocked), the system stored the user on Null Island (`[0.0, 0.0]`), which caused matching queries and maps to fail or display incorrect values.
+  - **Fix**: Updated `/auth/register` to check for `0.0` or missing coordinates. If coordinate data is missing but address fields (pincode, city, area) are filled, it triggers `forward_geocode` to resolve coordinates. If neither GPS nor address fields are available, it rejects with a `400 Bad Request` validation error.
+
+---
+
+## 6. Dynamic Mail SMTP and Twilio SMS OTP Delivery
+- **backend/server.py**
+  - **Issue**: SMTP mail settings were hardcoded to Gmail, and SMS OTPs only printed to logs with a mock dev response.
+  - **Fix**: 
+    - Updated `mail_conf` to load server, port, and security flags dynamically from environment variables.
+    - Integrated a native, asynchronous `send_twilio_sms` helper using the pre-installed `httpx` library. Connected it to `/auth/send-sms-otp` to deliver real SMS messages if Twilio configuration is present in `.env`.
+- **.env**
+  - Added placeholders for SMTP (Gmail example) and Twilio SID, Token, and Phone Number keys.
+
+---
+
+## 7. Heatmap Fixes (Geocoding + Precision)
+
+### A. Duplicate `forward_geocode` Bug (Root Cause of Empty Heatmap)
+- **File**: `backend/geocoding.py`
+- **Issue**: `forward_geocode` was defined **twice** in the same file. Python uses the *last* definition of a function, so the first version (with all keyword-optional args) was silently replaced by the second version (which required all 5 positional arguments). The heatmap endpoint at `server.py:1018` calls `forward_geocode(city=city, district=area, pincode=pincode)` — when only keyword args are passed to the required-args version, Python throws a `TypeError: missing required positional arguments`, which was then caught silently. This caused **0 heatmap points** for issues without pre-stored GPS coordinates.
+- **Fix**: Removed the first (duplicate) function definition. Made all parameters of `forward_geocode` optional with empty-string defaults so callers can pass any subset of args as keyword arguments.
+
+### B. Improved Query Fallback Chain
+- **File**: `backend/geocoding.py`
+- **Fix**: Added `city` to the multi-level query fallback list in `forward_geocode` so even if district/pincode lookups fail, using just city + state still resolves coordinates.
+
+### C. Heatmap Precision (Frontend)
+- **File**: `frontend/src/pages/DemandHeatmap.jsx`
+- **Issue**: `radius: 30` and `blur: 25` were too large, causing hotspot blobs to spill well outside the actual issue location.
+- **Fix**: Reduced to `radius: 20, blur: 15` so each point is tightly colored around its real GPS pin.
+- **Added**: Re-enabled the legend (it was commented out), added a live issue count badge (`N active issues mapped`), and added a client-side filter to drop any (0, 0) null-island coordinates.
+
+---
+
+## 8. Volunteer Matcher Skill Comparison Fix
+
+- **File**: `backend/matcher.py`
+- **Issue**: The `find_qualified_volunteers` method compared `req_skillset` strings directly using Python set intersection (`req_skills & set(v.get("skills", []))`). Since `req_skillset` values from the LLM are stored as-is (e.g. `"Medical Support"`), but volunteer skills entered via the registration form may differ in casing or whitespace, mismatches were silently dropping valid volunteers.
+- **Fix**: Added `.lower().strip()` normalization to both sides of the skill comparison before intersection:
+  - `req_skills = set(s.lower().strip() for s in issue.get("req_skillset", []) ...)`
+  - `set(s.lower().strip() for s in v.get("skills", []) ...)`
+- Now `"Medical Support"` vs `"medical support"` correctly produces a match.

@@ -37,7 +37,7 @@ import logging
 import google.generativeai as genai
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"), override=True)
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

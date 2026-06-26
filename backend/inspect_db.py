@@ -5,7 +5,7 @@ import json
 from bson import json_util
 
 # Load env from root
-load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"), override=True)
 
 def inspect():
     uri = os.getenv("MONGODB_URI")

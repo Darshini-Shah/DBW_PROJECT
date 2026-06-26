@@ -17,6 +17,8 @@ from passlib.context import CryptContext
 from pymongo import MongoClient, GEOSPHERE, errors
 from bson import ObjectId
 from dotenv import load_dotenv
+import re
+import httpx
 
 from geocoding import reverse_geocode, get_radius_km_for_urgency, forward_geocode
 from pipeline import process_survey_pdf
@@ -35,7 +37,7 @@ def haversine_distance(lat1, lon1, lat2, lon2):
 # ── Configuration ───────────────────────────────────────────────────────────────
 
 # Load environment variables from the root directory
-load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"), override=True)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -90,6 +92,55 @@ except Exception as e:
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+
+
+def is_strong_password(password: str) -> bool:
+    """Enforces strong password constraints: 8+ chars, upper, lower, digit, special char."""
+    if len(password) < 8:
+        return False
+    if not re.search(r"[A-Z]", password):
+        return False
+    if not re.search(r"[a-z]", password):
+        return False
+    if not re.search(r"\d", password):
+        return False
+    if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", password):
+        return False
+    return True
+
+
+async def send_twilio_sms(to_phone: str, otp_code: str) -> bool:
+    """Sends OTP SMS via Twilio API if credentials are set in .env."""
+    account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+    auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+    from_phone = os.getenv("TWILIO_PHONE_NUMBER")
+    
+    if not account_sid or not auth_token or not from_phone:
+        logger.info("Twilio credentials not fully set in .env. Falling back to dev/log mode.")
+        return False
+        
+    url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json"
+    auth = (account_sid, auth_token)
+    body_text = f"Your Smart Allocator verification code is: {otp_code}. It will expire in 10 minutes."
+    
+    data = {
+        "To": to_phone,
+        "From": from_phone,
+        "Body": body_text
+    }
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, auth=auth, data=data, timeout=10.0)
+            if response.status_code in [200, 201]:
+                logger.info(f"Twilio SMS sent to {to_phone} successfully.")
+                return True
+            else:
+                logger.error(f"Twilio SMS delivery failed: {response.status_code} - {response.text}")
+                return False
+    except Exception as e:
+        logger.error(f"Error calling Twilio API: {e}")
+        return False
 
 
 def hash_password(password: str) -> str:
@@ -153,8 +204,8 @@ class RegisterRequest(BaseModel):
     role: str  # "volunteer" or "field_worker"
     fullName: str
     phone: str
-    latitude: float
-    longitude: float
+    latitude: Optional[float] = 0.0
+    longitude: Optional[float] = 0.0
     pincode: Optional[str] = None
     city: Optional[str] = None
     area: Optional[str] = None
@@ -277,12 +328,12 @@ from fastapi_mail import FastMail, MessageSchema, ConnectionConfig, MessageType
 mail_conf = ConnectionConfig(
     MAIL_USERNAME=os.getenv("MAIL_USERNAME", "dummy@gmail.com"),
     MAIL_PASSWORD=os.getenv("MAIL_PASSWORD", "password"),
-    MAIL_FROM=os.getenv("MAIL_FROM", "info@smartallocator.org"),
-    MAIL_PORT=587,
-    MAIL_SERVER="smtp.gmail.com",
-    MAIL_STARTTLS=True,
-    MAIL_SSL_TLS=False,
-    USE_CREDENTIALS=True,
+    MAIL_FROM=os.getenv("MAIL_FROM", os.getenv("MAIL_USERNAME", "info@smartallocator.org")),
+    MAIL_PORT=int(os.getenv("MAIL_PORT", "587")),
+    MAIL_SERVER=os.getenv("MAIL_SERVER", "smtp.gmail.com"),
+    MAIL_STARTTLS=os.getenv("MAIL_STARTTLS", "True").lower() == "true",
+    MAIL_SSL_TLS=os.getenv("MAIL_SSL_TLS", "False").lower() == "true",
+    USE_CREDENTIALS=os.getenv("MAIL_USE_CREDENTIALS", "True").lower() == "true",
     VALIDATE_CERTS=False  # Disabled for easier dev setup
 )
 
@@ -433,11 +484,16 @@ async def send_sms_otp(req: SMSOTPRequest):
     
     logger.info(f"SMS OTP for {req.phone}: {otp}")
     
-    # DEV MODE: Return the OTP in the response
+    # Attempt to send SMS using Twilio
+    sms_sent = await send_twilio_sms(req.phone, otp)
+    if sms_sent:
+        return {"message": "OTP sent via SMS successfully"}
+    
+    # DEV MODE Fallback if credentials are not configured or request fails
     return {
-        "message": "SMS OTP generated in DEV MODE",
+        "message": "SMS OTP generated in DEV MODE (Twilio not configured/sending failed)",
         "dev_otp": otp,
-        "info": "In production, this would be sent via an SMS gateway like Twilio."
+        "info": "To send real SMS, define TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_PHONE_NUMBER in .env"
     }
 
 @app.post("/auth/verify-sms-otp")
@@ -470,22 +526,55 @@ async def register(req: RegisterRequest):
     if target_collection.find_one({"email": req.email}):
         raise HTTPException(status_code=400, detail="Email already registered in this role")
 
-    # LOCATION LOGIC: Mandatory auto-detect GPS coordinates
+    # Enforce password strength validation
+    if not is_strong_password(req.password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password must be at least 8 characters long and contain at least one uppercase letter, one lowercase letter, one number, and one special character."
+        )
+
+    # LOCATION LOGIC: Mandatory auto-detect GPS coordinates with fallback
     lat, lng = req.latitude, req.longitude
     
     # Use provided address fields or fallback to reverse geocoding
     pincode, city, area, state, street = req.pincode, req.city, req.area, req.state, req.street
     
-    if not pincode or not city:
-        try:
-            geo = await reverse_geocode(lat, lng)
-            pincode = pincode or geo.get("pincode", "")
-            city = city or geo.get("city", "")
-            area = area or geo.get("area", "")
-            state = state or geo.get("state", "")
-        except Exception as e:
-            logger.warning(f"Reverse geocode failed for {req.email}: {e}")
-            pincode, city, area, state = pincode or "000000", city or "Unknown", area or "Unknown", state or "Unknown"
+    # Fallback to forward geocoding if coordinates are 0.0/missing but address details are provided
+    if (lat == 0.0 and lng == 0.0) or lat is None or lng is None:
+        if pincode or city or area:
+            logger.info(f"Coordinates are 0.0/missing. Attempting forward geocoding for {req.email}...")
+            geo_res = await forward_geocode(street or "", city or "", area or "", state or "", pincode or "")
+            if geo_res.get("success"):
+                lat = geo_res["latitude"]
+                lng = geo_res["longitude"]
+                pincode = geo_res.get("pincode") or pincode
+                city = geo_res.get("city") or city
+                area = geo_res.get("area") or area
+                state = geo_res.get("state") or state
+                logger.info(f"Forward geocoding succeeded: lat={lat}, lng={lng}")
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Could not resolve your address to valid location coordinates. Please verify your pincode/city/state."
+                )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Coordinates are missing/0.0 and no address fields were provided to determine location."
+            )
+    else:
+        # If we have GPS coordinates, check if we need to reverse geocode to fill address fields
+        if not pincode or not city:
+            logger.info(f"GPS coordinates provided but address fields are missing. Reverse geocoding for {req.email}...")
+            try:
+                geo = await reverse_geocode(lat, lng)
+                pincode = pincode or geo.get("pincode", "")
+                city = city or geo.get("city", "")
+                area = area or geo.get("area", "")
+                state = state or geo.get("state", "")
+            except Exception as e:
+                logger.warning(f"Reverse geocode failed for {req.email}: {e}")
+                pincode, city, area, state = pincode or "000000", city or "Unknown", area or "Unknown", state or "Unknown"
 
     user_doc = {
         "email": req.email,

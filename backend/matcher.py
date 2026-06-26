@@ -99,8 +99,9 @@ class VolunteerMatcher:
           1. Within geo radius (based on issue urgency)
           2. Have at least one skill matching req_skillset
         Falls back to city/area text match if no coordinates.
+        Skill comparison is case-insensitive.
         """
-        req_skills = set(issue.get("req_skillset", []))
+        req_skills = set(s.lower().strip() for s in issue.get("req_skillset", []) if isinstance(s, str))
         urgency    = int(issue.get("scale of urgency") or 5)
         radius_m   = get_radius_km_for_urgency(urgency) * 1000
 
@@ -137,14 +138,15 @@ class VolunteerMatcher:
                 ]
             logger.warning(f"Issue {issue.get('surid')} has no coordinates — using text fallback.")
 
-        # ── Skill filter (set intersection) ───────────────────────────────────
+        # ── Skill filter (case-insensitive set intersection) ──────────────────
         if req_skills:
             volunteers = [
                 v for v in volunteers
-                if req_skills & set(v.get("skills", []))
+                if req_skills & set(s.lower().strip() for s in v.get("skills", []) if isinstance(s, str))
             ]
 
         return volunteers
+
 
     # ── Main matching loop ────────────────────────────────────────────────────
 
@@ -227,7 +229,7 @@ class VolunteerMatcher:
 
 def main():
     # Load environment variables from the root directory
-    load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+    load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"), override=True)
     mongodb_uri = os.getenv("MONGODB_URI")
 
     if not mongodb_uri:

@@ -22,7 +22,7 @@ import httpx
 from typing import Optional
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"), override=True)
 
 logger = logging.getLogger(__name__)
 
@@ -349,7 +349,7 @@ if __name__ == "__main__":
 
     async def run():
         enriched = await enrich_issue(test_issue)
-        print("\n── Enriched Issue ──────────────────────────────────")
+        print("\n--- Enriched Issue ----------------------------------")
         print(json.dumps(enriched, indent=2, default=str))
 
     asyncio.run(run())
