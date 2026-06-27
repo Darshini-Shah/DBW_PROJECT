@@ -109,37 +109,66 @@ def is_strong_password(password: str) -> bool:
     return True
 
 
-async def send_twilio_sms(to_phone: str, otp_code: str) -> bool:
-    """Sends OTP SMS via Twilio API if credentials are set in .env."""
+async def send_twilio_verify_otp(to_phone: str) -> bool:
+    """Sends OTP via Twilio Verify API. Returns True if sent successfully."""
     account_sid = os.getenv("TWILIO_ACCOUNT_SID")
     auth_token = os.getenv("TWILIO_AUTH_TOKEN")
-    from_phone = os.getenv("TWILIO_PHONE_NUMBER")
-    
-    if not account_sid or not auth_token or not from_phone:
-        logger.info("Twilio credentials not fully set in .env. Falling back to dev/log mode.")
+    verify_sid = os.getenv("TWILIO_VERIFY_SERVICE_SID")
+
+    if not account_sid or not auth_token or not verify_sid:
+        logger.info("Twilio Verify credentials not fully set in .env. Falling back to dev/log mode.")
         return False
-        
-    url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json"
+
+    url = f"https://verify.twilio.com/v2/Services/{verify_sid}/Verifications"
     auth = (account_sid, auth_token)
-    body_text = f"Your Smart Allocator verification code is: {otp_code}. It will expire in 10 minutes."
-    
     data = {
         "To": to_phone,
-        "From": from_phone,
-        "Body": body_text
+        "Channel": "sms"
     }
-    
+
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(url, auth=auth, data=data, timeout=10.0)
-            if response.status_code in [200, 201]:
-                logger.info(f"Twilio SMS sent to {to_phone} successfully.")
+            resp_json = response.json()
+            if response.status_code in [200, 201] and resp_json.get("status") in ["pending", "approved"]:
+                logger.info(f"Twilio Verify OTP sent to {to_phone} — status: {resp_json.get('status')}")
                 return True
             else:
-                logger.error(f"Twilio SMS delivery failed: {response.status_code} - {response.text}")
+                logger.error(f"Twilio Verify send failed: {response.status_code} - {response.text}")
                 return False
     except Exception as e:
-        logger.error(f"Error calling Twilio API: {e}")
+        logger.error(f"Error calling Twilio Verify API: {e}")
+        return False
+
+
+async def check_twilio_verify_otp(to_phone: str, otp_code: str) -> bool:
+    """Checks OTP via Twilio Verify API. Returns True if code is correct."""
+    account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+    auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+    verify_sid = os.getenv("TWILIO_VERIFY_SERVICE_SID")
+
+    if not account_sid or not auth_token or not verify_sid:
+        return False
+
+    url = f"https://verify.twilio.com/v2/Services/{verify_sid}/VerificationCheck"
+    auth = (account_sid, auth_token)
+    data = {
+        "To": to_phone,
+        "Code": otp_code
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, auth=auth, data=data, timeout=10.0)
+            resp_json = response.json()
+            if response.status_code == 200 and resp_json.get("status") == "approved":
+                logger.info(f"Twilio Verify OTP approved for {to_phone}")
+                return True
+            else:
+                logger.warning(f"Twilio Verify check failed: {response.status_code} - {resp_json}")
+                return False
+    except Exception as e:
+        logger.error(f"Error calling Twilio Verify check API: {e}")
         return False
 
 
@@ -404,104 +433,67 @@ async def root():
 
 @app.post("/auth/send-otp")
 async def send_otp(req: OTPRequest):
-    # Check if user already exists in either collection
-    if volunteer_collection.find_one({"email": req.email}) or field_worker_collection.find_one({"email": req.email}):
-        raise HTTPException(status_code=400, detail="Email already registered")
-    
-    otp = generate_otp()
-    expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
-    
-    otp_collection.update_one(
-        {"email": req.email},
-        {"$set": {"otp": otp, "expires_at": expires_at}},
-        upsert=True
-    )
-    
-    html = f"""
-    <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #eee;">
-        <h2 style="color: #4a90e2;">Verify Your Email</h2>
-        <p>Your OTP for Smart Allocator registration is:</p>
-        <h1 style="background: #f4f4f4; padding: 10px; text-align: center; letter-spacing: 5px;">{otp}</h1>
-        <p>This OTP will expire in 10 minutes.</p>
-    </div>
-    """
-    
-    message = MessageSchema(
-        subject="Smart Allocator - Email Verification",
-        recipients=[req.email],
-        body=html,
-        subtype=MessageType.html
-    )
-
-    try:
-        # In actual production, you'd await fastmail.send_message(message)
-        # For now, we'll log it and skip sending if credentials aren't set
-        logger.info(f"OTP for {req.email}: {otp}")
-        
-        # Check if we have real credentials (not dummy and not empty)
-        has_real_creds = (
-            mail_conf.MAIL_USERNAME != "dummy@gmail.com" and 
-            mail_conf.MAIL_USERNAME and 
-            mail_conf.MAIL_PASSWORD and 
-            mail_conf.MAIL_PASSWORD != "password"
-        )
-
-        if has_real_creds:
-            await fastmail.send_message(message)
-            return {"message": "OTP sent successfully"}
-        else:
-            logger.info("Using DEV MODE for OTP (no real mail credentials found)")
-            return {
-                "message": "OTP generated in DEV MODE (Check server logs)", 
-                "dev_otp": otp,
-                "info": "To send real emails, set MAIL_USERNAME and MAIL_PASSWORD in .env"
-            }
-    except Exception as e:
-        logger.error(f"Failed to send email: {e}")
-        # Return the OTP anyway in the response so the user can continue in dev mode
-        return {
-            "message": "Failed to send email, but OTP is available for dev", 
-            "dev_otp": otp, 
-            "error": str(e)
-        }
+    # Email OTP is disabled — only phone (SMS) OTP is used for verification.
+    # This endpoint is kept for backward compatibility but returns a no-op success.
+    logger.info(f"Email OTP requested for {req.email} (disabled — phone OTP is used instead)")
+    return {"message": "Email OTP disabled. Please use phone OTP verification."}
 
 @app.post("/auth/send-sms-otp")
 async def send_sms_otp(req: SMSOTPRequest):
+    # Ensure phone has +91 prefix for Twilio
+    phone = req.phone if req.phone.startswith("+") else f"+91{req.phone}"
+
+    # Try Twilio Verify first
+    verify_sent = await send_twilio_verify_otp(phone)
+    if verify_sent:
+        # Store a sentinel so verify-sms-otp knows to use Twilio Verify
+        otp_collection.update_one(
+            {"phone": phone},
+            {"$set": {"phone": phone, "use_twilio_verify": True,
+                      "expires_at": datetime.now(timezone.utc) + timedelta(minutes=10)}},
+            upsert=True
+        )
+        return {"message": "OTP sent via SMS successfully"}
+
+    # DEV MODE Fallback if Twilio Verify credentials are not configured
     otp = generate_otp()
-    
-    # Store OTP with TTL (10 mins)
     otp_collection.update_one(
-        {"phone": req.phone},
+        {"phone": phone},
         {
             "$set": {
-                "phone": req.phone,
+                "phone": phone,
                 "otp": otp,
+                "use_twilio_verify": False,
                 "expires_at": datetime.now(timezone.utc) + timedelta(minutes=10)
             }
         },
         upsert=True
     )
-    
-    logger.info(f"SMS OTP for {req.phone}: {otp}")
-    
-    # Attempt to send SMS using Twilio
-    sms_sent = await send_twilio_sms(req.phone, otp)
-    if sms_sent:
-        return {"message": "OTP sent via SMS successfully"}
-    
-    # DEV MODE Fallback if credentials are not configured or request fails
+    logger.info(f"[DEV MODE] SMS OTP for {phone}: {otp}")
     return {
-        "message": "SMS OTP generated in DEV MODE (Twilio not configured/sending failed)",
+        "message": "SMS OTP generated in DEV MODE (Twilio Verify not configured)",
         "dev_otp": otp,
-        "info": "To send real SMS, define TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_PHONE_NUMBER in .env"
+        "info": "To send real SMS, set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_VERIFY_SERVICE_SID in .env"
     }
 
 @app.post("/auth/verify-sms-otp")
 async def verify_sms_otp(req: SMSOTPVerifyRequest):
-    record = otp_collection.find_one({"phone": req.phone})
-    if not record or record["otp"] != req.otp:
+    phone = req.phone if req.phone.startswith("+") else f"+91{req.phone}"
+    record = otp_collection.find_one({"phone": phone})
+
+    if record and record.get("use_twilio_verify"):
+        # Verify using Twilio Verify API
+        approved = await check_twilio_verify_otp(phone, req.otp)
+        if not approved:
+            raise HTTPException(status_code=400, detail="Invalid or expired SMS OTP")
+        otp_collection.delete_one({"phone": phone})
+        return {"message": "Phone number verified successfully"}
+
+    # DEV MODE: check stored OTP
+    if not record or record.get("otp") != req.otp:
         raise HTTPException(status_code=400, detail="Invalid or expired SMS OTP")
-    
+
+    otp_collection.delete_one({"phone": phone})
     return {"message": "Phone number verified successfully"}
 
 @app.post("/auth/verify-otp")

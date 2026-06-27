@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, Form, Input, Select, Button, Typography, Row, Col, Checkbox, Space, Alert, Spin, Upload, App as AntApp } from 'antd';
 import { HeartOutlined, ArrowRightOutlined, CompassOutlined, EnvironmentOutlined, ArrowLeftOutlined, CheckCircleOutlined, ClockCircleOutlined, IdcardOutlined, UploadOutlined } from '@ant-design/icons';
-import { registerUser, sendOTP, verifyOTP, sendSMSOTP, verifySMSOTP } from '../api';
+import { registerUser, sendSMSOTP, verifySMSOTP } from '../api';
 import LocationPickerMap from '../components/LocationPickerMap';
 
 const { Title, Text } = Typography;
@@ -56,11 +56,7 @@ const RegisterVolunteer = ({ onSuccess }) => {
     });
   };
 
-  const [otpSent, setOtpSent] = useState(false);
-  const [otpVerified, setOtpVerified] = useState(false);
-  const [otpLoading, setOtpLoading] = useState(false);
-  const [verifyingOtp, setVerifyingOtp] = useState(false);
-  const [otp, setOtp] = useState('');
+  const [otpVerified] = useState(true); // Email OTP removed - always pass
 
   // Phone OTP state
   const [phoneOtpSent, setPhoneOtpSent] = useState(false);
@@ -68,43 +64,6 @@ const RegisterVolunteer = ({ onSuccess }) => {
   const [phoneOtpLoading, setPhoneOtpLoading] = useState(false);
   const [phoneVerifyingOtp, setPhoneVerifyingOtp] = useState(false);
   const [phoneOtp, setPhoneOtp] = useState('');
-
-  const handleSendOtp = async () => {
-    const email = form.getFieldValue('email');
-    if (!email) {
-      message.error('Please enter your email first!');
-      return;
-    }
-    setOtpLoading(true);
-    try {
-      const res = await sendOTP(email);
-      message.success('OTP sent to your email!');
-      if (res.dev_otp) message.info(`[DEV MODE] OTP: ${res.dev_otp}`, 10);
-      setOtpSent(true);
-    } catch (err) {
-      message.error(err.response?.data?.detail || 'Failed to send OTP');
-    } finally {
-      setOtpLoading(false);
-    }
-  };
-
-  const handleVerifyOtp = async () => {
-    const email = form.getFieldValue('email');
-    if (!otp) {
-      message.error('Please enter the OTP!');
-      return;
-    }
-    setVerifyingOtp(true);
-    try {
-      await verifyOTP(email, otp);
-      message.success('Email verified successfully!');
-      setOtpVerified(true);
-    } catch (err) {
-      message.error('Invalid OTP. Please try again.');
-    } finally {
-      setVerifyingOtp(false);
-    }
-  };
 
   const handleSendPhoneOtp = async () => {
     const phone = form.getFieldValue('phone');
@@ -144,8 +103,8 @@ const RegisterVolunteer = ({ onSuccess }) => {
   };
 
   const onFinish = async (values) => {
-    if (!otpVerified || !phoneOtpVerified) {
-      message.error('Please verify both Email and Phone with OTP first!');
+    if (!phoneOtpVerified) {
+      message.error('Please verify your phone number with OTP first!');
       return;
     }
 
@@ -327,69 +286,11 @@ const RegisterVolunteer = ({ onSuccess }) => {
                     <Input
                       size="large"
                       placeholder="name@example.com"
-                      disabled={otpVerified}
                       variant="filled"
                       style={{ borderRadius: '12px' }}
-                      suffix={
-                        !otpVerified && (
-                          <Button
-                            type="link"
-                            size="small"
-                            onClick={handleSendOtp}
-                            loading={otpLoading}
-                            style={{ padding: 0 }}
-                          >
-                            {otpSent ? 'Resend' : 'Send OTP'}
-                          </Button>
-                        )
-                      }
                     />
                   </Form.Item>
                 </Form.Item>
-
-                {otpSent && !otpVerified && (
-                  <div style={{ marginTop: '12px', marginBottom: '20px' }}>
-                    <div style={{ marginBottom: '8px' }}>
-                      <Text type="secondary" style={{ fontSize: '12px' }}>
-                        <ClockCircleOutlined /> Enter 6-digit email code
-                      </Text>
-                    </div>
-                    <Space direction="vertical" size="small" style={{ width: '100%' }}>
-                      <Input.OTP
-                        length={6}
-                        value={otp}
-                        onChange={(val) => setOtp(val)}
-                        size="large"
-                        variant="filled"
-                        style={{ borderRadius: '12px' }}
-                      />
-                      <Button
-                        type="primary"
-                        onClick={handleVerifyOtp}
-                        loading={verifyingOtp}
-                        block
-                        style={{ borderRadius: '10px', height: '40px', fontWeight: 600 }}
-                      >
-                        Verify Email Address
-                      </Button>
-                    </Space>
-                  </div>
-                )}
-                {otpVerified && (
-                  <div style={{
-                    background: '#f6ffed',
-                    padding: '12px 16px',
-                    borderRadius: '12px',
-                    marginBottom: '20px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '12px',
-                    border: '1px solid #b7eb8f'
-                  }}>
-                    <CheckCircleOutlined style={{ color: '#52c41a', fontSize: '18px' }} />
-                    <Text strong style={{ color: '#389e0d' }}>Verified Email Address</Text>
-                  </div>
-                )}
               </Col>
             </Row>
 

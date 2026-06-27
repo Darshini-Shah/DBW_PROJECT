@@ -23,19 +23,26 @@ function App() {
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
-  // Restore session from JWT on app load
+  // Restore session from JWT on app load — validate token against backend
   useEffect(() => {
-    const savedUser = localStorage.getItem('user');
     const token = localStorage.getItem('token');
-    if (savedUser && token) {
-      try {
-        setUser(JSON.parse(savedUser));
-      } catch {
-        localStorage.removeItem('user');
-        localStorage.removeItem('token');
-      }
+    if (!token) {
+      setLoading(false);
+      return;
     }
-    setLoading(false);
+    // Validate token with backend to handle expired tokens
+    getMe()
+      .then((userData) => {
+        setUser(userData);
+        // Keep localStorage in sync with fresh user data
+        localStorage.setItem('user', JSON.stringify(userData));
+      })
+      .catch(() => {
+        // Token invalid/expired — clear storage
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+      })
+      .finally(() => setLoading(false));
   }, []);
 
   // user effect removed notifications polling
