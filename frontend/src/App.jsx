@@ -91,7 +91,7 @@ function App() {
               <span style={{ color: 'white', fontWeight: 'bold', fontSize: '18px' }}>S</span>
             </div>
             <Title level={4} style={{ margin: 0, color: '#262626', fontWeight: 600 }}>
-              Smart Allocator
+              Smart Allocator Website For NGO
             </Title>
           </div>
           
@@ -163,7 +163,7 @@ function App() {
 
                     <Divider style={{ margin: '16px 0' }} />
                     <Button block type="primary" onClick={() => navigate('/profile')} style={{ marginBottom: '8px' }}>
-                      My Profile & Analytics
+                      Profile
                     </Button>
                     <Button block type="default" onClick={handleLogout}>
                       Logout
@@ -218,7 +218,7 @@ function App() {
         </Content>
         
         <Footer style={{ textAlign: 'center', color: '#8c8c8c', padding: '16px' }}>
-          Smart Resource Allocation ©{new Date().getFullYear()}
+          Smart Resource Allocation Website
         </Footer>
       </Layout>
     </ConfigProvider>

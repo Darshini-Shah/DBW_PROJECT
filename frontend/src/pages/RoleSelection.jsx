@@ -12,7 +12,7 @@ const RoleSelection = () => {
     <div style={{ padding: '24px', maxWidth: '800px', margin: '0 auto', textAlign: 'center', marginTop: '40px' }}>
       
       {/* Login Section */}
-      <Card
+      {/* <Card
         style={{ borderRadius: '16px', border: '2px solid transparent', boxShadow: '0 8px 24px rgba(24, 144, 255, 0.08)', marginBottom: '40px' }}
         bodyStyle={{ padding: '32px 24px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px' }}
       >
@@ -26,10 +26,10 @@ const RoleSelection = () => {
         >
           Log In
         </Button>
-      </Card>
+      </Card> */}
       
       {/* New User Label */}
-      <Title level={3} style={{ marginTop: 0, marginBottom: '32px', color: '#262626' }}>
+      <Title level={3} style={{ marginTop: 0, marginBottom: '16px', color: '#262626' }}>
         New User? Select your role to get started
       </Title>
 
@@ -63,6 +63,7 @@ const RoleSelection = () => {
           </Card>
         </Col>
       </Row>
+      
     </div>
   );
 };
