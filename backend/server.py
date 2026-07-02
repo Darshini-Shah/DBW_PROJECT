@@ -328,15 +328,17 @@ origins = [
     "http://localhost:5173",
     "http://localhost:5174",  
     "http://localhost:5175", 
-    "http://localhost:3000", # <--- Added the missing comma here
+    "http://localhost:3000",
     "https://matchpoint.onrender.com",
+    "https://matchpoint-84o5.onrender.com",
+    "https://matchpoint-84o5.onrender.com/", # Added with trailing slash just in case
 ]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,            # Allows your frontend to talk to this backend
-    allow_credentials=True,
-    allow_methods=["*"],              # Allows GET, POST, etc.
-    allow_headers=["*"],              # Allows all headers
+    allow_origins=["*"],  # Allows any site to make requests
+    allow_credentials=False, # Must be False if origins is "*"
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
